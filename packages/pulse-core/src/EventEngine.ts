@@ -26,6 +26,8 @@ import type {
   PaymentEventType,
   ReconnectConfig,
   SubscribeOptions,
+  TrustAuthEvent,
+  TrustAuthEventType,
   TrustlineEvent,
   TrustlineEventType,
   WatcherNotification,
@@ -46,7 +48,8 @@ type NormalizedEventOrPending =
   | ClaimableCreatedEvent
   | ClaimableClaimedEvent
   | LiquidityPoolDepositEvent
-  | LiquidityPoolWithdrawEvent;
+  | LiquidityPoolWithdrawEvent
+  | TrustAuthEvent;
 
 type StreamCallbacks = {
   onmessage: (record: unknown) => void;
@@ -505,6 +508,14 @@ export class EventEngine {
       return this.normalizeLiquidityPoolWithdraw(r, record);
     }
 
+    if (r.type === "allow_trust") {
+      return this.normalizeAllowTrust(r, record);
+    }
+
+    if (r.type === "set_trust_line_flags") {
+      return this.normalizeSetTrustLineFlags(r, record);
+    }
+
     return null;
   }
 
@@ -876,6 +887,74 @@ export class EventEngine {
     };
   }
 
+  private normalizeAllowTrust(
+    r: Record<string, unknown>,
+    raw: unknown
+  ): TrustAuthEvent | null {
+    const trustor = r.trustor;
+    const issuer = r.trustee ?? r.source_account;
+    const authorize = r.authorize;
+
+    if (typeof trustor !== "string" || trustor === "") return null;
+    if (typeof issuer !== "string" || issuer === "") return null;
+    if (typeof authorize !== "boolean") return null;
+    if (typeof r.created_at !== "string") return null;
+
+    const asset =
+      r.asset_type === "native"
+        ? "XLM"
+        : `${r.asset_code}:${r.asset_issuer}`;
+
+    const type: TrustAuthEventType = authorize ? "trustline.authorized" : "trustline.deauthorized";
+
+    return {
+      type,
+      trustor,
+      issuer,
+      asset,
+      timestamp: r.created_at,
+      operation: "allow_trust",
+      raw,
+    };
+  }
+
+  private normalizeSetTrustLineFlags(
+    r: Record<string, unknown>,
+    raw: unknown
+  ): TrustAuthEvent | null {
+    const trustor = r.trustor;
+    const issuer = r.source_account;
+
+    if (typeof trustor !== "string" || trustor === "") return null;
+    if (typeof issuer !== "string" || issuer === "") return null;
+    if (typeof r.created_at !== "string") return null;
+
+    const setFlagsS = r.set_flags_s as string[] | undefined;
+    const clearFlagsS = r.clear_flags_s as string[] | undefined;
+
+    const isSettingAuth = setFlagsS?.includes("authorized") ?? false;
+    const isClearingAuth = clearFlagsS?.includes("authorized") ?? false;
+
+    if (isSettingAuth === isClearingAuth) return null;
+
+    const type: TrustAuthEventType = isSettingAuth ? "trustline.authorized" : "trustline.deauthorized";
+
+    const asset =
+      r.asset_type === "native"
+        ? "XLM"
+        : `${r.asset_code}:${r.asset_issuer}`;
+
+    return {
+      type,
+      trustor,
+      issuer,
+      asset,
+      timestamp: r.created_at,
+      operation: "set_trust_line_flags",
+      raw,
+    };
+  }
+
   private passesFilter(address: string, event: NormalizedEvent): boolean {
     const filter = this.filters.get(address);
     if (!filter) return true;
@@ -1011,6 +1090,21 @@ export class EventEngine {
       if (watcher && this.passesFilter(event.source, event)) {
         watcher.emit(event.type, event);
         watcher.emit("*", event);
+      }
+      return;
+    }
+
+    if (event.type === "trustline.authorized" || event.type === "trustline.deauthorized") {
+      const issuerWatcher = this.registry.get(event.issuer);
+      if (issuerWatcher && this.passesFilter(event.issuer, event)) {
+        issuerWatcher.emit(event.type, event);
+        issuerWatcher.emit("*", event);
+      }
+
+      const trustorWatcher = this.registry.get(event.trustor);
+      if (trustorWatcher && event.trustor !== event.issuer && this.passesFilter(event.trustor, event)) {
+        trustorWatcher.emit(event.type, event);
+        trustorWatcher.emit("*", event);
       }
       return;
     }

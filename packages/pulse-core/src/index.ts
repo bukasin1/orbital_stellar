@@ -14,6 +14,7 @@ export type PaymentEventType =
 /** Event type for account options changes. */
 export type AccountOptionsEventType = "account.options_changed";
 export type LiquidityPoolEventType = "lp.deposited" | "lp.withdrawn";
+export type TrustAuthEventType = "trustline.authorized" | "trustline.deauthorized";
 /** Event type for account creation. */
 export type AccountEventType = "account.created";
 export type ClaimableCreatedEventType = "claimable.created";
@@ -183,6 +184,17 @@ export type LiquidityPoolWithdrawEvent = {
   raw: unknown;
 };
 
+export type TrustAuthEvent = {
+  type: TrustAuthEventType;
+  trustor: string;
+  issuer: string;
+  asset: string;
+  timestamp: string;
+  /** The original Horizon operation type ("allow_trust" or "set_trust_line_flags"). */
+  operation: string;
+  raw: unknown;
+};
+
 /**
  * A normalized account creation event from the Stellar network.
  */
@@ -250,7 +262,8 @@ export type NormalizedEvent =
   | ClaimableCreatedEvent
   | ClaimableClaimedEvent
   | LiquidityPoolDepositEvent
-  | LiquidityPoolWithdrawEvent;
+  | LiquidityPoolWithdrawEvent
+  | TrustAuthEvent;
 
 /**
  * A notification emitted by the EventEngine during reconnection attempts.

@@ -1792,4 +1792,152 @@ describe("pulse-core EventEngine", () => {
       );
     });
   });
+
+  describe("allow_trust → trustline.authorized / trustline.deauthorized", () => {
+    function makeAllowTrustRecord(
+      overrides: Record<string, unknown> = {}
+    ): Record<string, unknown> {
+      return {
+        type: "allow_trust",
+        source_account: "GISSUER",
+        trustor: "GTRUSTEE",
+        trustee: "GISSUER",
+        asset_type: "credit_alphanum4",
+        asset_code: "USDC",
+        asset_issuer: "GISSUER",
+        authorize: true,
+        created_at: "2026-05-01T10:00:00.000Z",
+        ...overrides,
+      };
+    }
+
+    it("normalizes allow_trust as trustline.authorized when authorize is true", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const normalize = (
+        engine as unknown as { normalize(record: unknown): unknown }
+      ).normalize.bind(engine);
+
+      const result = normalize(makeAllowTrustRecord());
+
+      expect(result).toEqual({
+        type: "trustline.authorized",
+        trustor: "GTRUSTEE",
+        issuer: "GISSUER",
+        asset: "USDC:GISSUER",
+        timestamp: "2026-05-01T10:00:00.000Z",
+        operation: "allow_trust",
+        raw: expect.any(Object),
+      });
+    });
+
+    it("normalizes allow_trust as trustline.deauthorized when authorize is false", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const normalize = (
+        engine as unknown as { normalize(record: unknown): unknown }
+      ).normalize.bind(engine);
+
+      const result = normalize(makeAllowTrustRecord({ authorize: false }));
+
+      expect(result).toEqual(expect.objectContaining({ type: "trustline.deauthorized" }));
+    });
+
+    it("routes trustline.authorized to both issuer and trustor watchers", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const issuerW = engine.subscribe("GISSUER");
+      const trustorW = engine.subscribe("GTRUSTEE");
+      const issuerH = vi.fn();
+      const trustorH = vi.fn();
+      issuerW.on("trustline.authorized", issuerH);
+      trustorW.on("trustline.authorized", trustorH);
+
+      engine.start();
+      latestStream().handlers.onmessage(makeAllowTrustRecord());
+
+      expect(issuerH).toHaveBeenCalledOnce();
+      expect(trustorH).toHaveBeenCalledOnce();
+    });
+
+    it("does not route to unrelated watchers", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const unrelated = engine.subscribe("GUNRELATED");
+      const handler = vi.fn();
+      unrelated.on("trustline.authorized", handler);
+
+      engine.start();
+      latestStream().handlers.onmessage(makeAllowTrustRecord());
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("drops record when authorize field is not boolean", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const normalize = (
+        engine as unknown as { normalize(record: unknown): unknown }
+      ).normalize.bind(engine);
+
+      const result = normalize(makeAllowTrustRecord({ authorize: "yes" }));
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("set_trust_line_flags → trustline.authorized / trustline.deauthorized", () => {
+    function makeSTLFRecord(
+      overrides: Record<string, unknown> = {}
+    ): Record<string, unknown> {
+      return {
+        type: "set_trust_line_flags",
+        source_account: "GISSUER",
+        trustor: "GTRUSTEE",
+        asset_type: "credit_alphanum4",
+        asset_code: "USDC",
+        asset_issuer: "GISSUER",
+        set_flags_s: ["authorized"],
+        clear_flags_s: [],
+        created_at: "2026-05-01T11:00:00.000Z",
+        ...overrides,
+      };
+    }
+
+    it("normalizes set_trust_line_flags as trustline.authorized when setting authorized flag", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const normalize = (
+        engine as unknown as { normalize(record: unknown): unknown }
+      ).normalize.bind(engine);
+
+      const result = normalize(makeSTLFRecord());
+
+      expect(result).toEqual({
+        type: "trustline.authorized",
+        trustor: "GTRUSTEE",
+        issuer: "GISSUER",
+        asset: "USDC:GISSUER",
+        timestamp: "2026-05-01T11:00:00.000Z",
+        operation: "set_trust_line_flags",
+        raw: expect.any(Object),
+      });
+    });
+
+    it("normalizes set_trust_line_flags as trustline.deauthorized when clearing authorized flag", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const normalize = (
+        engine as unknown as { normalize(record: unknown): unknown }
+      ).normalize.bind(engine);
+
+      const result = normalize(makeSTLFRecord({ set_flags_s: [], clear_flags_s: ["authorized"] }));
+
+      expect(result).toEqual(expect.objectContaining({ type: "trustline.deauthorized" }));
+    });
+
+    it("returns null when both set and clear include authorized (ambiguous)", () => {
+      const engine = new EventEngine({ network: "testnet" });
+      const normalize = (
+        engine as unknown as { normalize(record: unknown): unknown }
+      ).normalize.bind(engine);
+
+      const result = normalize(makeSTLFRecord({ set_flags_s: ["authorized"], clear_flags_s: ["authorized"] }));
+
+      expect(result).toBeNull();
+    });
+  });
 });
