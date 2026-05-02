@@ -2,6 +2,7 @@ import type { NormalizedEvent, Watcher } from "@orbital/pulse-core";
 import { createHmac, timingSafeEqual } from "crypto";
 
 import type { WebhookConfig } from "./types.js";
+export { verifyWebhookEdge } from "./edge.js";
 export type { WebhookConfig } from "./types.js";
 
 type ResolvedWebhookConfig = Omit<Required<WebhookConfig>, "url"> & {
@@ -44,7 +45,7 @@ export class WebhookDelivery {
   private async deliverToUrl(
     event: NormalizedEvent,
     url: string,
-    attempt = 1
+    attempt = 1,
   ): Promise<void> {
     if (this.watcher.stopped) return;
 
@@ -146,7 +147,7 @@ export function verifyWebhook(
   payload: string,
   signature: string,
   secret: string,
-  timestamp: string
+  timestamp: string,
 ): NormalizedEvent | null {
   if (!/^\d+$/.test(timestamp)) return null;
 
