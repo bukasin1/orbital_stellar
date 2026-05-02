@@ -150,6 +150,16 @@ export class EventEngine {
   }
 
   /**
+   * Stops all active watchers without closing the underlying SSE stream.
+   * Use this to drain subscriptions while keeping the stream open.
+   */
+  unsubscribeAll(): void {
+    for (const watcher of this.registry.values()) {
+      watcher.stop();
+    }
+  }
+
+  /**
    * Starts the SSE stream to listen for Stellar network events.
    * No-op if the stream is already running.
    */
