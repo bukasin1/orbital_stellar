@@ -44,8 +44,8 @@ export type SourceStatus = {
 export type EngineStatus = {
   running: boolean;
   watcherCount: number;
-  lastEventAt: string | null;
   contractWatcherCount?: number;
+  lastEventAt: string | null;
   reconnectAttempt: number;
   pausedSources?: ("horizon" | "soroban")[];
   sources: {
@@ -366,6 +366,37 @@ export type WatcherNotification = {
   emittedAt: string;
   /** The cursor value that was expired or lost, if applicable. */
   lostCursor?: string;
+};
+
+/**
+ * Notification emitted by SorobanSubscriber when a stored cursor has fallen
+ * outside the RPC server's retention window.
+ *
+ * Consumers should treat this as a signal that a gap in event history has
+ * occurred. The subscriber automatically recovers by resuming from
+ * `latestLedger`, but events between `lostCursor` and the recovery point are
+ * permanently unavailable via the RPC server.
+ *
+ * @example
+ * watcher.on("engine.cursor_expired", (n) => {
+ *   console.warn(`[${n.source}] cursor expired: ${n.lostCursor} — history gap, resuming from latest ledger`);
+ * });
+ */
+export type SorobanCursorExpiredNotification = {
+  /** Discriminant — always "engine.cursor_expired". */
+  type: "engine.cursor_expired";
+  /**
+   * The human-readable source label passed to SorobanSubscriber (e.g.
+   * contract address or subscriber name).
+   */
+  source: string;
+  /**
+   * The cursor value that caused the error, or `undefined` if no cursor had
+   * been stored yet (startLedger mode expired instead).
+   */
+  lostCursor: string | undefined;
+  /** ISO 8601 timestamp of when this notification was emitted. */
+  emittedAt: string;
 };
 
 /**

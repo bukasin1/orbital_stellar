@@ -15,8 +15,38 @@ import { SorobanRpcError } from "./errors.js";
  *   4. Silently drops any events that arrive from an aborted poll.
  */
 
+// ---------------------------------------------------------------------------
+// Minimal LRU set (Map-backed, insertion-order eviction).
+// ---------------------------------------------------------------------------
+
+class LruSet {
+  private readonly map = new Map<string, 1>();
+
+  constructor(private readonly maxSize: number) { }
+
+  has(id: string): boolean {
+    return this.map.has(id);
+  }
+
+  add(id: string): void {
+    if (this.map.has(id)) this.map.delete(id);
+    this.map.set(id, 1);
+    if (this.map.size > this.maxSize) {
+      this.map.delete(this.map.keys().next().value as string);
+    }
+  }
+
+  get size(): number {
+    return this.map.size;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public types
+// ---------------------------------------------------------------------------
+
 /** Minimal interface for a cursor persistence layer. */
-export interface CursorStore {
+export interface CursorStoreLike {
   getCursor(): Promise<string | undefined>;
   saveCursor(cursor: string): Promise<void>;
 }
@@ -502,5 +532,260 @@ export class SorobanSubscriber {
       if ((err as NodeJS.ErrnoException).code === "ABORT_ERR") return true;
     }
     return false;
+  }
+}
+
+import { rpc } from "@stellar/stellar-sdk";
+import type { Watcher } from "./Watcher.js";
+import type { CursorStore, SorobanCursorExpiredNotification } from "./index.js";
+
+/**
+ * Options accepted by SorobanSubscriber.
+ */
+export type SorobanSubscriberOptionsCursorExpired = {
+  /**
+   * The Stellar RPC server URL to poll events from.
+   * Example: "https://soroban-testnet.stellar.org"
+   */
+  rpcUrl: string;
+
+  /**
+   * A human-readable label identifying the event source (e.g. contract address
+   * or subscriber name). Included in the engine.cursor_expired notification so
+   * callers can identify which subscriber expired.
+   */
+  source: string;
+
+  /**
+   * The cursor to resume from (opaque string returned by a previous
+   * getEvents response). When undefined or empty the subscriber starts
+   * from the latest ledger instead.
+   */
+  cursor?: string;
+
+  /**
+   * Filters forwarded verbatim to rpc.Server.getEvents.
+   * Leave undefined to receive all events visible to the RPC server.
+   */
+  filters?: rpc.Api.GetEventsRequest["filters"];
+
+  /**
+   * How many milliseconds to wait between polling cycles.
+   * Defaults to 5_000 (5 seconds).
+   */
+  pollIntervalMs?: number;
+
+  /**
+   * Optional logger. Falls back to a no-op logger when omitted.
+   */
+  logger?: {
+    info(msg: string, ...args: unknown[]): void;
+    warn(msg: string, ...args: unknown[]): void;
+    error(msg: string, ...args: unknown[]): void;
+  };
+};
+
+/** JSON-RPC error shape thrown by @stellar/stellar-sdk when the RPC server
+ *  returns an error response. The `code` field is the JSON-RPC error code. */
+type JsonRpcError = {
+  code: number;
+  message: string;
+  data?: unknown;
+};
+
+/**
+ * Detects whether the error thrown by rpc.Server.getEvents indicates
+ * that the supplied cursor (or startLedger) is outside the server's retention
+ * window.
+ *
+ * Stellar RPC returns JSON-RPC error code -32600 ("Invalid Request") with a
+ * message containing "startLedger" or "cursor" and a phrase like "before the
+ * oldest ledger" / "out of range" when the requested ledger is no longer
+ * retained.
+ */
+function isCursorExpiredError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+
+  const e = err as JsonRpcError;
+
+  // JSON-RPC -32600 = Invalid Request — the code Stellar RPC uses for
+  // out-of-retention-window cursor/startLedger errors.
+  if (e.code !== -32600) return false;
+
+  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+  return (
+    msg.includes("cursor") ||
+    msg.includes("startledger") ||
+    msg.includes("start_ledger") ||
+    msg.includes("before the oldest") ||
+    msg.includes("out of range")
+  );
+}
+
+const noop = { info: () => { }, warn: () => { }, error: () => { } };
+
+/**
+ * SorobanSubscriber continuously polls a Stellar RPC server for contract
+ * events and forwards them to a Watcher.
+ *
+ * **Cursor-expiry recovery**
+ * Stellar RPC retains at most 7 days of events (24 h by default). If the
+ * stored cursor falls outside that window, `getEvents` will throw a
+ * JSON-RPC -32600 error. SorobanSubscriber catches that error, emits an
+ * `engine.cursor_expired` notification on the Watcher, logs a warning about
+ * the data-loss implication, and resumes polling from the current
+ * `latestLedger` — dropping the gap in history.
+ *
+ * **Data-loss notice**: Events that occurred between the expired cursor
+ * and the recovery point are permanently lost. Consumers that require
+ * guaranteed event delivery should persist a durable replay store and compare
+ * the recovered `latestLedger` against the last successfully processed ledger
+ * to detect any gap.
+ */
+export class SorobanSubscriberCursorExpired {
+  private readonly server: rpc.Server;
+  private readonly source: string;
+  private readonly filters: rpc.Api.GetEventsRequest["filters"];
+  private readonly pollIntervalMs: number;
+  private readonly log: Required<NonNullable<SorobanSubscriberOptionsCursorExpired["logger"]>>;
+
+  private cursor: string | undefined;
+  private watcher: Watcher | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+
+  constructor(options: SorobanSubscriberOptionsCursorExpired) {
+    this.server = new rpc.Server(options.rpcUrl);
+    this.source = options.source;
+    this.cursor = options.cursor ?? undefined;
+    this.filters = options.filters ?? [];
+    this.pollIntervalMs = options.pollIntervalMs ?? 5_000;
+    this.log = options.logger ?? noop;
+  }
+
+  /**
+   * Attaches a Watcher and begins polling. No-op if already running.
+   */
+  start(watcher: Watcher): void {
+    if (this.running) return;
+    this.running = true;
+    this.watcher = watcher;
+    this.scheduleNext(0);
+  }
+
+  /**
+   * Stops polling and detaches the Watcher. Safe to call multiple times.
+   */
+  stop(): void {
+    this.running = false;
+    this.watcher = null;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  // ─── private ────────────────────────────────────────────────────────────
+
+  private scheduleNext(delayMs: number): void {
+    if (!this.running) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.poll();
+    }, delayMs);
+  }
+
+  private async poll(): Promise<void> {
+    if (!this.running) return;
+
+    try {
+      await this.fetchAndForward();
+    } catch (err: unknown) {
+      if (isCursorExpiredError(err)) {
+        await this.recoverFromExpiredCursor(err);
+      } else {
+        this.log.error("[pulse-core] SorobanSubscriber: getEvents failed", err);
+      }
+    }
+
+    this.scheduleNext(this.pollIntervalMs);
+  }
+
+  /**
+   * Builds the getEvents request, calls the RPC server, advances the cursor,
+   * and forwards each raw event to the Watcher.
+   */
+  private async fetchAndForward(): Promise<void> {
+    const request = this.buildRequest();
+    const response = await this.server.getEvents(request);
+
+    // Advance cursor so the next poll continues from where this one ended.
+    if (response.cursor) {
+      this.cursor = response.cursor;
+    }
+
+    if (!this.watcher || !this.running) return;
+
+    for (const event of response.events) {
+      // Re-check running state between events; stop() may be called mid-loop.
+      if (!this.running || !this.watcher) break;
+      // rpc.Api.EventResponse is not part of the WatcherEvent union — it is a
+      // Soroban-specific payload carried on the open "soroban.event" channel.
+      // The casts to `never` are intentional: Watcher's emit() signature is
+      // constrained to WatcherEvent, but the wildcard "*" channel is used by
+      // consumers to receive any event type, including Soroban ones.
+      this.watcher.emit("soroban.event", event as never);
+      this.watcher.emit("*", event as never);
+    }
+  }
+
+  private buildRequest(): rpc.Api.GetEventsRequest {
+    const base = {
+      filters: this.filters ?? [],
+    } satisfies Partial<rpc.Api.GetEventsRequest>;
+
+    if (this.cursor) {
+      // Cursor mode: startLedger must be omitted per SDK constraints.
+      return { ...base, cursor: this.cursor } as rpc.Api.GetEventsRequest;
+    }
+
+    // No cursor yet — start from latest ledger (ledger-range mode).
+    // startLedger: 0 instructs the RPC server to use its own latestLedger.
+    return { ...base, startLedger: 0 } as rpc.Api.GetEventsRequest;
+  }
+
+  /**
+   * Handles a cursor-expired error:
+   * 1. Emits `engine.cursor_expired` on the Watcher with `{ source, lostCursor }`.
+   * 2. Logs a warning that describes the data-loss implication.
+   * 3. Falls back to `startLedger = latestLedger`, dropping the history gap.
+   */
+  private async recoverFromExpiredCursor(err: unknown): Promise<void> {
+    const lostCursor = this.cursor;
+
+    this.log.warn(
+      `[pulse-core] SorobanSubscriber(${this.source}): cursor "${lostCursor ?? "<none>"}" ` +
+      `is outside the RPC server's retention window. ` +
+      `Events between the expired cursor and the recovery point are PERMANENTLY LOST. ` +
+      `Resuming from latestLedger. ` +
+      `Consider persisting a durable replay store to detect such gaps in future.`,
+      err
+    );
+
+    // Notify the Watcher so application code can react (alert, persist a gap
+    // record, etc.).
+    if (this.watcher && this.running) {
+      const notification: SorobanCursorExpiredNotification = {
+        type: "engine.cursor_expired",
+        source: this.source,
+        lostCursor,
+        emittedAt: new Date().toISOString(),
+      };
+      this.watcher.emit("engine.cursor_expired", notification as never);
+    }
+
+    // Reset the cursor so the next buildRequest() falls back to startLedger
+    // mode (latest ledger), skipping the lost gap.
+    this.cursor = undefined;
   }
 }
