@@ -45,6 +45,22 @@ import type {
   WatcherNotificationType,
   Logger,
   CursorStore,
+  RawHorizonPayment,
+  RawHorizonSetOptions,
+  RawHorizonCreateAccount,
+  RawHorizonManageSellOffer,
+  RawHorizonManageBuyOffer,
+  RawHorizonBumpSequence,
+  RawHorizonManageData,
+  RawHorizonChangeTrust,
+  RawHorizonAccountMerge,
+  RawHorizonCreateClaimableBalance,
+  RawHorizonClaimClaimableBalance,
+  RawHorizonLiquidityPoolDeposit,
+  RawHorizonLiquidityPoolWithdraw,
+  RawHorizonAllowTrust,
+  RawHorizonSetTrustLineFlags,
+  RawSorobanEvent,
 } from "./index.js";
 import { UnknownNetworkError, NETWORK_PASSPHRASES } from "./index.js";
 
@@ -93,7 +109,7 @@ const DEFAULT_RECONNECT: Required<ReconnectConfig> = {
 
 const STELLAR_MAX_TRUSTLINE_LIMIT = "922337203685.4775807";
 
-const noop: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+const noop: Logger = { info: () => { }, warn: () => { }, error: () => { } };
 
 /**
  * Produces a stable, order-independent string key for a ContractFilter array.
@@ -638,6 +654,8 @@ export class EventEngine {
       emittedAt: new Date().toISOString(),
     });
 
+    this.pausedSources.clear();
+
     for (const watcher of this.registry.values()) {
       watcher.stop();
     }
@@ -960,7 +978,7 @@ export class EventEngine {
         amount: toStellarAmount(r.amount as string),
         asset,
         timestamp: r.created_at as string,
-        raw: record,
+        raw: record as RawHorizonPayment,
       };
     }
 
@@ -994,7 +1012,7 @@ export class EventEngine {
         source: toAccountAddress(r.account as string),
         destination: toAccountAddress(r.into as string),
         timestamp: r.created_at as string,
-        raw: record,
+        raw: record as RawHorizonAccountMerge,
       };
     }
 
@@ -1069,7 +1087,7 @@ export class EventEngine {
       amount: toStellarAmount(amount),
       price: r.price as string,
       timestamp: r.created_at,
-      raw,
+      raw: raw as RawHorizonManageSellOffer | RawHorizonManageBuyOffer,
     };
   }
 
@@ -1091,7 +1109,7 @@ export class EventEngine {
       account: toAccountAddress(r.account),
       starting_balance: r.starting_balance,
       timestamp: r.created_at,
-      raw,
+      raw: raw as RawHorizonCreateAccount,
     };
   }
 
@@ -1107,7 +1125,7 @@ export class EventEngine {
       source: toAccountAddress(r.source_account),
       bump_to: r.bump_to as string,
       timestamp: r.created_at,
-      raw,
+      raw: raw as RawHorizonBumpSequence,
     };
   }
 
@@ -1148,7 +1166,7 @@ export class EventEngine {
       value,
       decoded,
       timestamp: typeof r.created_at === "string" ? r.created_at : "",
-      raw,
+      raw: raw as RawHorizonManageData,
     };
   }
 
@@ -1175,7 +1193,7 @@ export class EventEngine {
       asset,
       limit,
       timestamp: r.created_at,
-      raw,
+      raw: raw as RawHorizonChangeTrust,
     };
   }
 
@@ -1230,7 +1248,7 @@ export class EventEngine {
       source: toAccountAddress(r.source_account as string),
       changes,
       timestamp: r.created_at as string,
-      raw,
+      raw: raw as RawHorizonSetOptions,
     };
   }
 
@@ -1283,7 +1301,7 @@ export class EventEngine {
       asset,
       amount: toStellarAmount(r.amount as string),
       timestamp: r.created_at as string,
-      raw,
+      raw: raw as RawHorizonCreateClaimableBalance,
     };
   }
 
@@ -1309,7 +1327,7 @@ export class EventEngine {
       claimant: toAccountAddress(r.source_account as string),
       balanceId: r.balance_id as string,
       timestamp: r.created_at as string,
-      raw,
+      raw: raw as RawHorizonClaimClaimableBalance,
     };
   }
 
@@ -1351,7 +1369,7 @@ export class EventEngine {
       reserves_deposited: r.reserves_deposited as LiquidityPoolReserve[],
       shares_received: r.shares_received as string,
       timestamp: r.created_at as string,
-      raw,
+      raw: raw as RawHorizonLiquidityPoolDeposit,
     };
   }
 
@@ -1388,7 +1406,7 @@ export class EventEngine {
       reserves_received: r.reserves_received as LiquidityPoolReserve[],
       shares_redeemed: r.shares as string,
       timestamp: r.created_at as string,
-      raw,
+      raw: raw as RawHorizonLiquidityPoolWithdraw,
     };
   }
 
@@ -1413,7 +1431,7 @@ export class EventEngine {
       asset,
       timestamp: r.created_at,
       operation: "allow_trust",
-      raw,
+      raw: raw as RawHorizonAllowTrust,
     };
   }
 
@@ -1449,7 +1467,7 @@ export class EventEngine {
       asset,
       timestamp: r.created_at,
       operation: "set_trust_line_flags",
-      raw,
+      raw: raw as RawHorizonSetTrustLineFlags,
     };
   }
 
@@ -1468,7 +1486,7 @@ export class EventEngine {
       ...(typeof r.ledger === "number" ? { ledger: r.ledger } : {}),
       ...(typeof r.txHash === "string" ? { txHash: r.txHash } : {}),
       timestamp: r.created_at,
-      raw,
+      raw: raw as RawSorobanEvent,
     };
   }
 
@@ -1489,7 +1507,7 @@ export class EventEngine {
       ...(typeof r.txHash === "string" ? { txHash: r.txHash } : {}),
       inSuccessfulContractCall: Boolean(r.inSuccessfulContractCall),
       timestamp: r.created_at,
-      raw,
+      raw: raw as RawSorobanEvent,
     };
   }
 
@@ -1815,7 +1833,7 @@ export interface RpcContractInvokedEvent {
   ledger: number;
   ledgerClosedAt: string;
   inSuccessfulContractCall: boolean;
-  raw: unknown;
+  raw: RawSorobanEvent;
 }
 
 /** @internal */
@@ -1831,7 +1849,7 @@ export interface RpcContractEmittedEvent {
   topics: string[];
   value: string;
   inSuccessfulContractCall: boolean;
-  raw: unknown;
+  raw: RawSorobanEvent;
 }
 
 /**
