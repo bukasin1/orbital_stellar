@@ -2,12 +2,14 @@ import { useState, useEffect } from "react";
 import type { NormalizedEvent } from "@orbital/pulse-core";
 import { acquireEventConnection } from "./connectionPool.js";
 
-export type UseEventConfig = {
+export type UseEventConfig<T extends NormalizedEvent = NormalizedEvent> = {
   serverUrl: string;
   address: string;
   event?: string | string[]; // "*" = all events; array = allowlist of types
   /** API key forwarded as ?token= query param — required when the server has authentication enabled */
   token?: string;
+  /** SSR initial state; replaced on first live event */
+  initialEvent?: T | null;
 };
 
 export type EventState<T extends NormalizedEvent = NormalizedEvent> = {
@@ -17,17 +19,17 @@ export type EventState<T extends NormalizedEvent = NormalizedEvent> = {
 };
 
 export function useStellarEvent<T extends NormalizedEvent = NormalizedEvent>(
-  config: UseEventConfig
+  config: UseEventConfig<T>
 ): EventState<T>;
 export function useStellarEvent<T extends NormalizedEvent = NormalizedEvent>(
   serverUrl: string,
   address: string,
-  options?: Pick<UseEventConfig, "event" | "token">
+  options?: Pick<UseEventConfig<T>, "event" | "token" | "initialEvent">
 ): EventState<T>;
 export function useStellarEvent<T extends NormalizedEvent = NormalizedEvent>(
-  configOrUrl: UseEventConfig | string,
+  configOrUrl: UseEventConfig<T> | string,
   address?: string,
-  options?: Pick<UseEventConfig, "event" | "token">
+  options?: Pick<UseEventConfig<T>, "event" | "token" | "initialEvent">
 ): EventState<T> {
   // Normalise the two call signatures down to four primitives.
   const serverUrl =
@@ -42,6 +44,10 @@ export function useStellarEvent<T extends NormalizedEvent = NormalizedEvent>(
     typeof configOrUrl === "string"
       ? options?.token
       : configOrUrl.token;
+  const initialEvent: T | null =
+    (typeof configOrUrl === "string"
+      ? options?.initialEvent
+      : configOrUrl.initialEvent) ?? null;
 
   // Serialise eventType to a stable string for the dep array.
   // An array literal passed by the caller would otherwise be a new reference
@@ -51,7 +57,7 @@ export function useStellarEvent<T extends NormalizedEvent = NormalizedEvent>(
     : eventType;
 
   const [state, setState] = useState<EventState<T>>({
-    event: null,
+    event: initialEvent,
     connected: false,
     error: null,
   });
@@ -106,9 +112,14 @@ export function useStellarEvent<T extends NormalizedEvent = NormalizedEvent>(
 
 type PaymentEvent = Extract<NormalizedEvent, { type: "payment.received" }>;
 
-export function useStellarPayment(serverUrl: string, address: string) {
+export function useStellarPayment(
+  serverUrl: string,
+  address: string,
+  options?: { initialEvent?: PaymentEvent | null }
+) {
   const base = useStellarEvent<PaymentEvent>(serverUrl, address, {
     event: "payment.received",
+    initialEvent: options?.initialEvent,
   });
   const amountStroop: bigint | null =
     base.event?.amount != null
@@ -117,6 +128,13 @@ export function useStellarPayment(serverUrl: string, address: string) {
   return { ...base, amountStroop };
 }
 
-export function useStellarActivity(serverUrl: string, address: string) {
-  return useStellarEvent(serverUrl, address, { event: "*" });
+export function useStellarActivity(
+  serverUrl: string,
+  address: string,
+  options?: { initialEvent?: NormalizedEvent | null }
+) {
+  return useStellarEvent(serverUrl, address, {
+    event: "*",
+    initialEvent: options?.initialEvent,
+  });
 }
