@@ -8,9 +8,18 @@ import { createHmac, timingSafeEqual } from "crypto";
 import type { VerifyWebhookOptions, WebhookConfig } from "./types.js";
 import { DEFAULT_MAX_AGE_MS, DEFAULT_CLOCK_SKEW_MS } from "./types.js";
 import { NOOP_WEBHOOK_METRICS, CountingWebhookMetrics } from "./metrics.js";
+import type { BackoffStrategy } from "./backoff.js";
+import { exponentialJittered } from "./backoff.js";
 export { verifyWebhookEdge } from "./edge.js";
 export type { VerifyWebhookOptions, WebhookConfig } from "./types.js";
 export type { WebhookMetrics } from "./types.js";
+export type { BackoffStrategy } from "./backoff.js";
+export {
+  exponentialJittered,
+  linear,
+  cappedExponential,
+  constant,
+} from "./backoff.js";
 export { NOOP_WEBHOOK_METRICS, CountingWebhookMetrics } from "./metrics.js";
 
 type ResolvedWebhookConfig = Omit<
@@ -19,6 +28,7 @@ type ResolvedWebhookConfig = Omit<
 > & {
   urls: string[];
   urlValidator?: WebhookConfig["urlValidator"];
+  backoff: BackoffStrategy;
 };
 
 export class WebhookDelivery {
@@ -37,6 +47,7 @@ export class WebhookDelivery {
       deliveryTimeoutMs: 10000,
       maxConcurrentRetries: 100,
       random: Math.random,
+      backoff: exponentialJittered,
       metrics: NOOP_WEBHOOK_METRICS,
       ...config,
       urls: Array.isArray(config.url) ? [...config.url] : [config.url],
@@ -144,8 +155,7 @@ export class WebhookDelivery {
           } as unknown as NormalizedEvent);
         }
 
-        const exponentialDelay = Math.pow(2, attempt - 1) * 1000;
-        const delay = Math.floor(this.config.random() * exponentialDelay);
+        const delay = this.config.backoff(attempt, this.config.random);
         const retryTimer = setTimeout(() => {
           this.retryTimers.delete(retryTimer);
           void this.deliverToUrl(event, url, attempt + 1);

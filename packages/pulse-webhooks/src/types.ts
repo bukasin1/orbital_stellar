@@ -1,3 +1,5 @@
+import type { BackoffStrategy } from "./backoff.js";
+
 export type WebhookMetrics = {
   recordAttempt(
     url: string,
@@ -17,6 +19,8 @@ export type WebhookConfig = {
   maxConcurrentRetries?: number;
   /** Optional RNG for testing jitter. Defaults to `Math.random`. */
   random?: () => number;
+  /** Optional backoff strategy for retry scheduling. Defaults to exponentialJittered. */
+  backoff?: BackoffStrategy;
   /** Optional custom URL validator for additional block-lists. Return an error message to reject, or null to allow. */
   urlValidator?: (url: string) => Promise<string | null>;
   /** Optional metrics observer for webhook delivery attempts and terminal outcomes. */

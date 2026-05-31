@@ -395,6 +395,95 @@ describe("pulse-webhooks WebhookDelivery", () => {
     expect(attempt2Delay).toBeGreaterThanOrEqual(0);
     expect(attempt2Delay).toBeLessThan(2000);
   });
+
+  describe("backoff strategies", () => {
+    it("uses exponentialJittered strategy (default) with deterministic RNG", async () => {
+      const { exponentialJittered } = await import("../src/backoff.js");
+
+      let rngValue = 0.5;
+      const fixedRandom = () => rngValue;
+
+      expect(exponentialJittered(1, fixedRandom)).toBe(500); // 2^0 * 1000 * 0.5 = 500
+      expect(exponentialJittered(2, fixedRandom)).toBe(1000); // 2^1 * 1000 * 0.5 = 1000
+      expect(exponentialJittered(3, fixedRandom)).toBe(2000); // 2^2 * 1000 * 0.5 = 2000
+      expect(exponentialJittered(4, fixedRandom)).toBe(4000); // 2^3 * 1000 * 0.5 = 4000
+    });
+
+    it("uses linear strategy with deterministic RNG", async () => {
+      const { linear } = await import("../src/backoff.js");
+
+      let rngValue = 0.5;
+      const fixedRandom = () => rngValue;
+
+      expect(linear(1, fixedRandom)).toBe(500); // 1 * 1000 * 0.5 = 500
+      expect(linear(2, fixedRandom)).toBe(1000); // 2 * 1000 * 0.5 = 1000
+      expect(linear(3, fixedRandom)).toBe(1500); // 3 * 1000 * 0.5 = 1500
+      expect(linear(4, fixedRandom)).toBe(2000); // 4 * 1000 * 0.5 = 2000
+    });
+
+    it("uses cappedExponential strategy with deterministic RNG", async () => {
+      const { cappedExponential } = await import("../src/backoff.js");
+
+      let rngValue = 0.5;
+      const fixedRandom = () => rngValue;
+
+      expect(cappedExponential(1, fixedRandom)).toBe(500); // min(2^0 * 1000, 30000) * 0.5 = 500
+      expect(cappedExponential(2, fixedRandom)).toBe(1000); // min(2^1 * 1000, 30000) * 0.5 = 1000
+      expect(cappedExponential(3, fixedRandom)).toBe(2000); // min(2^2 * 1000, 30000) * 0.5 = 2000
+      expect(cappedExponential(4, fixedRandom)).toBe(4000); // min(2^3 * 1000, 30000) * 0.5 = 4000
+      expect(cappedExponential(5, fixedRandom)).toBe(8000); // min(2^4 * 1000, 30000) * 0.5 = 8000
+      expect(cappedExponential(6, fixedRandom)).toBe(15000); // min(2^5 * 1000, 30000) * 0.5 = 15000
+      expect(cappedExponential(7, fixedRandom)).toBe(15000); // min(2^6 * 1000, 30000) * 0.5 = 15000 (capped)
+    });
+
+    it("uses constant strategy with deterministic RNG", async () => {
+      const { constant } = await import("../src/backoff.js");
+
+      let rngValue = 0.5;
+      const fixedRandom = () => rngValue;
+
+      expect(constant(1, fixedRandom)).toBe(500); // 1000 * 0.5 = 500
+      expect(constant(2, fixedRandom)).toBe(500); // 1000 * 0.5 = 500
+      expect(constant(3, fixedRandom)).toBe(500); // 1000 * 0.5 = 500
+      expect(constant(4, fixedRandom)).toBe(500); // 1000 * 0.5 = 500
+    });
+
+    it("accepts custom backoff strategy in WebhookConfig", async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      let rngValue = 0.75;
+      const fixedRandom = () => rngValue;
+
+      const customStrategy: (attempt: number, rng: () => number) => number = (
+        attempt,
+        rng,
+      ) => {
+        return Math.floor(rng() * 5000); // constant 5000ms max delay
+      };
+
+      const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
+
+      const watcher = new Watcher("GABC");
+      new WebhookDelivery(watcher, {
+        url: "https://example.com/webhooks/stellar",
+        secret: "top-secret",
+        retries: 2,
+        random: fixedRandom,
+        backoff: customStrategy,
+      });
+
+      watcher.emit("*", deliveryEvent);
+      await flushAsyncWork();
+
+      const timeoutCalls = setTimeoutSpy.mock.calls.filter(
+        (call: any[]) => call[1] !== 10000,
+      );
+
+      // Custom strategy should produce 5000 * 0.75 = 3750ms delay
+      expect(timeoutCalls[0][1]).toBe(3750);
+    });
+  });
 });
 
 describe("pulse-webhooks verifyWebhook", () => {
