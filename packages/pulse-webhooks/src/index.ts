@@ -5,9 +5,11 @@ import { DeadLetterStore } from "./MemoryDeadLetterStore.js";
 import type { Tracer, VerifyWebhookOptions, WebhookConfig } from "./types.js";
 import { DEFAULT_MAX_AGE_MS, DEFAULT_CLOCK_SKEW_MS } from "./types.js";
 export { DeadLetterStore } from "./MemoryDeadLetterStore.js";
+export { NOOP_WEBHOOK_METRICS, CountingWebhookMetrics } from "./metrics.js";
+export type { WebhookMetrics } from "./types.js";
 export { PostgresDeadLetterStore } from "./PostgresDeadLetterStore.js";
 export { RedisRetryQueue } from "./RedisRetryQueue.js";
-export { verifyWebhookEdge } from "./edge.js";
+export { verifyWebhookEdge, verifyWebhookEdgeRaw } from "./edge.js";
 export type { DeadLetterEntry, DeadLetterFilter as MemoryDeadLetterFilter } from "./MemoryDeadLetterStore.js";
 export type { DeadLetterFilter, DeadLetterInput, DeadLetterRecord, PgLike } from "./PostgresDeadLetterStore.js";
 export type { RedisLike, RedisRetryQueueOptions } from "./RedisRetryQueue.js";
@@ -246,17 +248,36 @@ export function verifyWebhook(
   timestamp: string,
   options: VerifyWebhookOptions = {},
 ): NormalizedEvent | null {
-  if (!/^\d+$/.test(timestamp)) return null;
+  if (!verifyWebhookRaw(payload, signature, secret, timestamp, options)) return null;
+  try {
+    return JSON.parse(payload) as NormalizedEvent;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verifies webhook signature without parsing JSON.
+ * Use when routing the raw body to another consumer (e.g., a queue) to avoid the parse overhead.
+ */
+export function verifyWebhookRaw(
+  payload: string,
+  signature: string,
+  secret: string,
+  timestamp: string,
+  options: VerifyWebhookOptions = {},
+): boolean {
+  if (!/^\d+$/.test(timestamp)) return false;
 
   const timestampMs = Number(timestamp);
-  if (!Number.isFinite(timestampMs)) return null;
+  if (!Number.isFinite(timestampMs)) return false;
 
   const maxAgeMs = options.maxAgeMs ?? DEFAULT_MAX_AGE_MS;
   const clockSkewMs = options.clockSkewMs ?? DEFAULT_CLOCK_SKEW_MS;
   const nowMs = options.nowMs ?? Date.now();
 
-  if (timestampMs > nowMs + clockSkewMs) return null;
-  if (timestampMs < nowMs - maxAgeMs - clockSkewMs) return null;
+  if (timestampMs > nowMs + clockSkewMs) return false;
+  if (timestampMs < nowMs - maxAgeMs - clockSkewMs) return false;
 
   const expected = createHmac("sha256", secret)
     .update(`${timestamp}.${payload}`)
@@ -265,12 +286,6 @@ export function verifyWebhook(
   const expectedBuffer = Buffer.from(expected, "hex");
   const signatureBuffer = Buffer.from(signature, "hex");
 
-  if (expectedBuffer.length !== signatureBuffer.length) return null;
-  if (!timingSafeEqual(expectedBuffer, signatureBuffer)) return null;
-
-  try {
-    return JSON.parse(payload) as NormalizedEvent;
-  } catch {
-    return null;
-  }
+  if (expectedBuffer.length !== signatureBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, signatureBuffer);
 }
