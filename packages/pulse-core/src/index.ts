@@ -4,6 +4,8 @@ export { EngineAlreadyStartedError, HorizonStreamError } from "./errors.js";
 export { StrKey } from "@stellar/stellar-sdk";
 export { CursorStore } from "./CursorStore.js";
 export { PostgresCursorStore, PgLike } from "./PostgresCursorStore.js";
+export { evaluatePredicate, normalizeClaimPredicate, isClaimPredicateType } from "./claimPredicate.js";
+export type { ClaimPredicate } from "./claimPredicate.js";
 
 /** The Stellar network to connect to. */
 export type Network = "mainnet" | "testnet";
