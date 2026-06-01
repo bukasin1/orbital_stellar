@@ -3,6 +3,7 @@ export { SorobanRpcClient } from "./SorobanRpcClient.js";
 export type { SorobanRpcClientOptions } from "./SorobanRpcClient.js";
 export { EventEngine } from "./EventEngine.js";
 export { SorobanSubscriber } from "./SorobanSubscriber.js";
+export type { SorobanSubscriberOptions, ReconnectingPayload } from "./SorobanSubscriber.js";
 export { validateContractFilters } from "./contractFilters.js";
 export { Watcher } from "./Watcher.js";
 export type {
@@ -62,6 +63,7 @@ export type EngineStatus = {
     soroban: SourceStatus;
   };
 };
+
 
 /** Passphrase strings for each supported Stellar network. */
 export const NETWORK_PASSPHRASES = {
@@ -369,6 +371,10 @@ export type WatcherNotification = {
   attempt: number;
   /** The delay in milliseconds before the next reconnection attempt (for "engine.reconnecting" events). */
   delayMs?: number;
+  /** The cursor position at the time of failure (for "engine.reconnecting" events). */
+  cursor?: string;
+  /** The source that triggered this notification. */
+  source?: "horizon" | "soroban";
   /** ISO 8601 timestamp of when this notification was emitted. */
   emittedAt: string;
   /** The cursor value that was expired or lost, if applicable. */

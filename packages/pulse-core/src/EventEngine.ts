@@ -169,7 +169,6 @@ export class EventEngine {
       ...config.reconnect,
     };
     this.log = config.logger ?? noop;
-<<<<<<< HEAD
     this.network = config.network;
     this.cursorStore = config.cursorStore;
     this.streamKey = config.streamKey ?? "pulse-core-cursor";

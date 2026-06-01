@@ -46,6 +46,13 @@ export interface SorobanSubscription {
   onEvent?: (event: SorobanEvent) => Promise<void>;
 }
 
+export interface ReconnectingPayload {
+  attempt: number;
+  delayMs: number;
+  cursor?: string;
+  source: "soroban";
+}
+
 export interface SorobanSubscriberOptions {
   rpc: SorobanRpc;
   cursorStore: CursorStore;
@@ -65,6 +72,8 @@ export interface SorobanSubscriberOptions {
   /** Pagination limit for RPC `getEvents` calls. Must be 1–10,000. Defaults to 100. */
   pageLimit?: number;
   subscriptions?: SorobanSubscription[];
+  /** Called when a poll fails and a reconnect is scheduled. */
+  onReconnecting?: (payload: ReconnectingPayload) => void;
 }
 
 export class SorobanSubscriber {
@@ -74,6 +83,7 @@ export class SorobanSubscriber {
   private readonly pageSize: number;
   private readonly pageLimit: number;
   private readonly seen: LruSet;
+  private readonly onReconnecting?: (payload: ReconnectingPayload) => void;
 
   public subscriptions: SorobanSubscription[] = [];
 
@@ -109,6 +119,7 @@ export class SorobanSubscriber {
     if (options.subscriptions) {
       this.subscriptions = [...options.subscriptions];
     }
+    this.onReconnecting = options.onReconnecting;
   }
 
   /**
@@ -139,6 +150,35 @@ export class SorobanSubscriber {
       }
       if (this.inflightAbort === abort) {
         this.inflightAbort = null;
+      }
+    }
+  }
+
+  /**
+   * Runs a continuous poll loop with exponential-backoff reconnection.
+   * Calls `onReconnecting` (if provided) before each retry, passing the
+   * cursor captured at the time of failure and `source: 'soroban'`.
+   */
+  async start(
+    reconnect: { initialDelayMs?: number; maxDelayMs?: number } = {}
+  ): Promise<void> {
+    const initialDelayMs = reconnect.initialDelayMs ?? 1000;
+    const maxDelayMs = reconnect.maxDelayMs ?? 30000;
+    let attempt = 0;
+
+    while (!this.isStopped) {
+      try {
+        await this.pollOnce();
+      } catch (err) {
+        if (this.isStopped) return;
+
+        attempt++;
+        const cursor = await this.cursorStore.getCursor().catch(() => undefined);
+        const delayMs = Math.min(initialDelayMs * 2 ** (attempt - 1), maxDelayMs);
+
+        this.onReconnecting?.({ attempt, delayMs, cursor, source: "soroban" });
+
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
       }
     }
   }
