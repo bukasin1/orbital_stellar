@@ -32,6 +32,7 @@ export interface SorobanEvent {
   value: unknown;
   contractId?: string;
   type?: string;
+  decodedData?: unknown;
 }
 
 /** Minimal interface for a Soroban RPC client. */
@@ -41,7 +42,8 @@ export interface SorobanRpc {
     limit: number,
     signal?: AbortSignal,
     filters?: ContractSubscriptionFilter[],
-  ): Promise<{ events: SorobanEvent[] }>;
+    options?: { xdrFormat?: "base64" | "json"; signal?: AbortSignal } | AbortSignal
+  ): Promise<{ events: SorobanEvent[]; [key: string]: any }>;
 }
 
 /** Alias for {@link SorobanRpc}; the name used by EventEngine's replay API. */
@@ -95,6 +97,7 @@ export interface SorobanSubscriberOptions {
   onRetryableError?: (error: SorobanRpcError) => void;
   /** Notified when a terminal (non-retryable) {@link SorobanRpcError} is caught. */
   onTerminalError?: (error: unknown) => void;
+  xdrFormat?: "base64" | "json";
 }
 
 const MIN_PAGE_LIMIT = 1;
@@ -107,6 +110,7 @@ export class SorobanSubscriber {
   private readonly cursorStore: CursorStore;
   private readonly onEvent?: (event: SorobanEvent) => Promise<void>;
   private readonly pageLimit: number;
+  private readonly xdrFormat: "base64" | "json";
 
   private isStopped = false;
 
@@ -165,6 +169,7 @@ export class SorobanSubscriber {
     this.rpc = options.rpc;
     this.cursorStore = options.cursorStore;
     this.onEvent = options.onEvent;
+    this.xdrFormat = options.xdrFormat ?? "json";
     this.pageLimit = pageLimit;
     this.dedupCacheSize = options.dedupCacheSize ?? DEFAULT_DEDUP_CACHE_SIZE;
     this.endLedger = options.endLedger;
@@ -330,6 +335,10 @@ export class SorobanSubscriber {
         this.pageLimit,
         signal,
         filters.length > 0 ? filters : undefined,
+        {
+          xdrFormat: this.xdrFormat,
+          signal,
+        }
       ),
     );
 
@@ -422,15 +431,20 @@ export class SorobanSubscriber {
    *   filters match the event, falling back to the constructor `onEvent`.
    */
   private async dispatch(event: SorobanEvent): Promise<void> {
+    const eventToEmit = { ...event };
+    if (this.xdrFormat === "json") {
+      eventToEmit.decodedData = event.value;
+    }
+
     if (this.subscriptions.length === 0) {
-      if (this.onEvent) await this.onEvent(event);
+      if (this.onEvent) await this.onEvent(eventToEmit);
       return;
     }
 
     for (const sub of this.subscriptions) {
-      if (this.eventMatchesSubscription(event, sub)) {
+      if (this.eventMatchesSubscription(eventToEmit, sub)) {
         const handler = sub.onEvent ?? this.onEvent;
-        if (handler) await handler(event);
+        if (handler) await handler(eventToEmit);
       }
     }
   }

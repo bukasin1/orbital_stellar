@@ -152,7 +152,7 @@ export class SorobanRpcClient {
    *
    * @param method - The JSON-RPC method name.
    * @param params - Optional JSON-RPC parameters.
-   * @param signal - Optional AbortSignal.
+   * @param signal - Optional AbortSignal for request cancellation.
    * @returns The JSON-RPC response body.
    */
   async request(method: string, params?: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -230,20 +230,55 @@ export class SorobanRpcClient {
    *
    * @param startCursor - Optional cursor to start fetching from.
    * @param limit - Optional maximum number of events to return.
-   * @param signal - Optional AbortSignal.
+   * @param signalOrOptions - Optional AbortSignal or option bag (e.g. xdrFormat: 'base64' | 'json', signal: AbortSignal).
    * @param filters - Optional array of filters (up to 5 filters).
+   * @param options - Optional configuration options (e.g. xdrFormat: 'base64' | 'json', signal: AbortSignal).
    * @returns The JSON-RPC `result` payload, with `events` defaulting to `[]`.
    */
   async getEvents(
     startCursor?: string,
     limit?: number,
-    signal?: AbortSignal,
+    signalOrOptions?: AbortSignal | { xdrFormat?: "base64" | "json"; signal?: AbortSignal },
     filters?: ContractSubscriptionFilter[],
+    options?: { xdrFormat?: "base64" | "json"; signal?: AbortSignal } | AbortSignal
   ): Promise<SorobanGetEventsResult> {
     const params: Record<string, unknown> = {};
     if (startCursor !== undefined) params.startCursor = startCursor;
     if (limit !== undefined) params.limit = limit;
     if (filters !== undefined && filters.length > 0) params.filters = filters;
+
+    let xdrFormat: "base64" | "json" = "json";
+    let signal: AbortSignal | undefined = undefined;
+
+    // Resolve signal or options from the third parameter
+    if (signalOrOptions !== undefined) {
+      if (signalOrOptions instanceof AbortSignal || (typeof signalOrOptions === "object" && signalOrOptions !== null && "addEventListener" in signalOrOptions)) {
+        signal = signalOrOptions as AbortSignal;
+      } else if (typeof signalOrOptions === "object" && signalOrOptions !== null) {
+        if ("xdrFormat" in signalOrOptions) {
+          xdrFormat = (signalOrOptions as any).xdrFormat ?? "json";
+        }
+        if ("signal" in signalOrOptions) {
+          signal = (signalOrOptions as any).signal;
+        }
+      }
+    }
+
+    // Resolve signal or options from the fifth parameter (options)
+    if (options !== undefined) {
+      if (options instanceof AbortSignal || (typeof options === "object" && options !== null && "addEventListener" in options)) {
+        signal = options as AbortSignal;
+      } else if (typeof options === "object" && options !== null) {
+        if ("xdrFormat" in options) {
+          xdrFormat = (options as any).xdrFormat ?? "json";
+        }
+        if ("signal" in options) {
+          signal = (options as any).signal;
+        }
+      }
+    }
+
+    params.xdrFormat = xdrFormat;
 
     const body = (await this.request("getEvents", params, signal)) as {
       result?: Partial<SorobanGetEventsResult>;

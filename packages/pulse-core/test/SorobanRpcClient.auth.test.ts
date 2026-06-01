@@ -223,6 +223,7 @@ describe("SorobanRpcClient — authenticated RPC providers", () => {
       expect(parsedBody.params).toEqual({
         startCursor: "000001",
         limit: 50,
+        xdrFormat: "json",
       });
     });
 

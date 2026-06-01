@@ -1806,7 +1806,6 @@ export class EventEngine {
 
 /** @internal */
 export interface RpcContractInvokedEvent {
-  // export interface SorobanContractInvokedEvent {
   type: "contract_invoked";
   id: string;
   pagingToken: string;
@@ -1816,11 +1815,11 @@ export interface RpcContractInvokedEvent {
   ledgerClosedAt: string;
   inSuccessfulContractCall: boolean;
   raw: unknown;
+  decodedData?: any;
 }
 
 /** @internal */
 export interface RpcContractEmittedEvent {
-  // export interface SorobanContractEmittedEvent {
   type: "contract_emitted";
   id: string;
   pagingToken: string;
@@ -1832,6 +1831,7 @@ export interface RpcContractEmittedEvent {
   value: string;
   inSuccessfulContractCall: boolean;
   raw: unknown;
+  decodedData?: any;
 }
 
 /**
@@ -1840,8 +1840,19 @@ export interface RpcContractEmittedEvent {
  */
 export function normalizeContractEvent(
   rawRpcEvent: any,
-  logger?: Logger,
+  xdrFormatOrLogger?: "base64" | "json" | Logger,
+  loggerOption?: Logger,
 ): RpcContractInvokedEvent | RpcContractEmittedEvent | null {
+  let xdrFormat: "base64" | "json" = "base64";
+  let logger = loggerOption;
+
+  if (xdrFormatOrLogger !== undefined) {
+    if (typeof xdrFormatOrLogger === "string") {
+      xdrFormat = xdrFormatOrLogger;
+    } else {
+      logger = xdrFormatOrLogger as Logger;
+    }
+  }
   // 1. Structural check patterns
   if (!rawRpcEvent || typeof rawRpcEvent !== "object") {
     logger?.warn("[pulse-core] Dropping malformed Soroban event: payload is not a valid object.", {
@@ -1912,7 +1923,9 @@ export function normalizeContractEvent(
       return null;
     }
 
-    return {
+    const isJson = xdrFormat === "json" || typeof value === "object" || rawRpcEvent.decodedData !== undefined;
+
+    const norm: any = {
       type: "contract_emitted",
       id: String(e.id),
       pagingToken: String(e.pagingToken),
@@ -1921,10 +1934,16 @@ export function normalizeContractEvent(
       ledger: Number(ledger),
       ledgerClosedAt: String(ledgerClosedAt),
       topics: (topic as unknown[]).map((t) => String(t)),
-      value: String(value),
+      value: isJson ? "" : String(value),
       inSuccessfulContractCall: Boolean(inSuccessfulContractCall),
       raw: rawRpcEvent,
     };
+
+    if (isJson) {
+      norm.decodedData = rawRpcEvent.decodedData !== undefined ? rawRpcEvent.decodedData : value;
+    }
+
+    return norm;
   }
 
   logger?.warn(
