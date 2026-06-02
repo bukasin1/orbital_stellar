@@ -167,13 +167,14 @@ describe("pulse-core EventEngine", () => {
       }
     ).normalize.bind(engine);
 
-    const result = normalize({
+    const record = {
       type: "payment",
       from: "GSRC",
       amount: "42",
       asset_type: "native",
       created_at: "2026-03-26T20:00:00.000Z",
-    });
+    };
+    const result = normalize(record);
 
     expect(result).toBeNull();
     expect(log.warn).toHaveBeenCalledWith(
@@ -1435,11 +1436,25 @@ describe("pulse-core EventEngine", () => {
   describe("status()", () => {
     it("returns accurate snapshot in initial state", () => {
       const engine = new EventEngine({ network: "testnet" });
-      expect(engine.status()).toMatchObject({
+      expect(engine.status()).toEqual({
         running: false,
         watcherCount: 0,
+        contractWatcherCount: 0,
         lastEventAt: null,
         reconnectAttempt: 0,
+        sources: {
+          horizon: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+            cursor: undefined,
+          },
+          soroban: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+          },
+        },
       });
     });
 
@@ -1448,11 +1463,25 @@ describe("pulse-core EventEngine", () => {
       engine.subscribe("GABC");
       engine.start();
 
-      expect(engine.status()).toMatchObject({
+      expect(engine.status()).toEqual({
         running: true,
         watcherCount: 1,
+        contractWatcherCount: 0,
         lastEventAt: null,
         reconnectAttempt: 0,
+        sources: {
+          horizon: {
+            running: true,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+            cursor: "now",
+          },
+          soroban: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+          },
+        },
       });
     });
 
@@ -1473,11 +1502,25 @@ describe("pulse-core EventEngine", () => {
 
       latestStream().handlers.onerror(new Error("disconnect"));
 
-      expect(engine.status()).toMatchObject({
+      expect(engine.status()).toEqual({
         running: false,
         watcherCount: 0,
+        contractWatcherCount: 0,
         lastEventAt: null,
         reconnectAttempt: 1,
+        sources: {
+          horizon: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 1,
+            cursor: "now",
+          },
+          soroban: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+          },
+        },
       });
     });
 
@@ -1489,11 +1532,25 @@ describe("pulse-core EventEngine", () => {
 
       engine.stop();
 
-      expect(engine.status()).toMatchObject({
+      expect(engine.status()).toEqual({
         running: false,
         watcherCount: 0,
+        contractWatcherCount: 0,
         lastEventAt: null,
         reconnectAttempt: 0,
+        sources: {
+          horizon: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+            cursor: undefined,
+          },
+          soroban: {
+            running: false,
+            lastEventAt: null,
+            reconnectAttempt: 0,
+          },
+        },
       });
     });
   });
