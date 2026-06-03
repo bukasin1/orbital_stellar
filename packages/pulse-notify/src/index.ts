@@ -138,7 +138,7 @@ type PaymentEvent = Extract<NormalizedEvent, { type: "payment.received" }>;
 export function useStellarPayment(
   serverUrl: string,
   address: string,
-  options?: { initialEvent?: PaymentEvent | null; filter?: (event: NormalizedEvent) => boolean; withCredentials?: boolean }
+  options?: Pick<UseEventConfig<PaymentEvent>, "initialEvent" | "filter" | "withCredentials">
 ) {
   const base = useStellarEvent<PaymentEvent>(serverUrl, address, {
     event: "payment.received",
@@ -156,7 +156,7 @@ export function useStellarPayment(
 export function useStellarActivity(
   serverUrl: string,
   address: string,
-  options?: { initialEvent?: NormalizedEvent | null; filter?: (event: NormalizedEvent) => boolean; withCredentials?: boolean }
+  options?: Pick<UseEventConfig, "initialEvent" | "filter" | "withCredentials">
 ) {
   return useStellarEvent(serverUrl, address, {
     event: "*",
