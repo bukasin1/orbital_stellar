@@ -30,6 +30,8 @@ export { coalesceCursorStore, CoalescingStore } from "./coalesceCursorStore.js";
 export type { CoalescingStoreOptions } from "./coalesceCursorStore.js";
 export { migrateCursors } from "./migrateCursors.js";
 export type { MigrateCursorsResult } from "./migrateCursors.js";
+export { SorobanRpcError, isSorobanRpcError } from "./errors.js";
+export type { SorobanRpcErrorCode, SorobanRpcErrorOptions } from "./errors.js";
 
 /** The Stellar network to connect to. */
 export type Network = "mainnet" | "testnet";
