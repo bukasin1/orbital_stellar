@@ -443,6 +443,8 @@ export type CoreConfig = {
   streamKey?: string;
   /** Number of consecutive cursor store failures before marking it unhealthy. Defaults to 5. */
   cursorFailureThreshold?: number;
+  /** Optional ABI registry client used to enrich `contract.emitted` events with `decodedData`. */
+  abiRegistry?: AbiRegistryClientLike;
   /** Soroban RPC configuration. */
   soroban?: {
     /** Pagination limit for RPC `getEvents` calls. Must be 1–10,000. Defaults to 100. */
@@ -490,10 +492,10 @@ export type ContractInvokedEvent = {
   function: string;
   /** Ordered list of arguments passed to the function. */
   args: unknown[];
-  /** The ledger sequence number where the invocation occurred. */
-  ledger: number;
-  /** The transaction hash of the transaction containing this invocation. */
-  txHash: string;
+  /** The ledger sequence number where the invocation occurred, when available. */
+  ledger?: number;
+  /** The transaction hash of the transaction containing this invocation, when available. */
+  txHash?: string;
   /** ISO 8601 timestamp of the invocation. */
   timestamp: string;
   /** The original raw record from the Soroban API. */
@@ -516,6 +518,14 @@ export type ContractEmittedEvent = {
    * decode error, or when no registry is configured.
    */
   decodedData?: unknown;
+  /** Ledger sequence number where the event was emitted, when available. */
+  ledger?: number;
+  /** Unique event identifier from the Soroban RPC, when available. */
+  eventId?: string;
+  /** Transaction hash containing this event, when available. */
+  txHash?: string;
+  /** Whether the emitting contract call succeeded, when available. */
+  inSuccessfulContractCall?: boolean;
   timestamp: string;
   /** The original raw record from the Soroban API. */
   raw: unknown;

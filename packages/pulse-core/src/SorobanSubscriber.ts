@@ -40,6 +40,9 @@ export interface SorobanRpc {
   ): Promise<{ events: SorobanEvent[] }>;
 }
 
+/** Alias for {@link SorobanRpc}; the name used by EventEngine's replay API. */
+export type SorobanRpcLike = SorobanRpc;
+
 export interface SorobanSubscription {
   id: string;
   filters: ContractSubscriptionFilter[];
@@ -67,6 +70,8 @@ export interface SorobanSubscriberOptions {
   /** Called once when a bounded replay run has delivered all events up to endLedger. */
   onDone?: () => void;
   pageSize?: number;
+  /** Interval for the self-driving {@link SorobanSubscriber.start} poll loop. Defaults to 2000ms. */
+  pollIntervalMs?: number;
 }
 
 export class SorobanSubscriber {
@@ -90,11 +95,71 @@ export class SorobanSubscriber {
    */
   private isPolling = false;
 
+  /** Active multi-filter subscriptions. Empty means single legacy `onEvent` mode. */
+  private readonly subscriptions: SorobanSubscription[] = [];
+
+  // --- Bounded-replay mode state (set when `endLedger` is provided) ---
+  /** Exclusive upper-bound ledger; replay stops once an event reaches it. */
+  private readonly endLedger?: number;
+  /** Called once when a bounded replay run completes. */
+  private readonly onDone?: () => void;
+  /** Ephemeral cursor used during replay so the durable store is never written. */
+  private replayCursor: string | undefined;
+  /** True once a replay run has finished (endLedger reached or stream exhausted). */
+  private replayDone = false;
+
+  // --- Self-driving poll loop state (used by start()/stop()) ---
+  private _isRunning = false;
+  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly pollIntervalMs: number;
+  /** ISO timestamp of the most recently delivered event, or null. */
+  lastEventAt: string | null = null;
+
   constructor(options: SorobanSubscriberOptions) {
     this.rpc = options.rpc;
     this.cursorStore = options.cursorStore;
     this.onEvent = options.onEvent;
     this.pageSize = options.pageSize ?? 100;
+    this.endLedger = options.endLedger;
+    this.onDone = options.onDone;
+    this.pollIntervalMs = options.pollIntervalMs ?? 2000;
+  }
+
+  /** True when operating in bounded-replay mode (an `endLedger` was supplied). */
+  private get isReplayMode(): boolean {
+    return this.endLedger !== undefined;
+  }
+
+  /** Whether the self-driving poll loop is active. */
+  get isRunning(): boolean {
+    return this._isRunning;
+  }
+
+  /**
+   * Begins a self-driving poll loop, invoking {@link pollOnce} immediately and
+   * then every `pollIntervalMs`. Idempotent while already running.
+   */
+  start(): void {
+    if (this._isRunning) return;
+    this._isRunning = true;
+    const tick = () => {
+      this.inflightPoll = (this.inflightPoll ?? Promise.resolve()).then(() =>
+        this.pollOnce()
+      );
+    };
+    tick();
+    this.pollTimer = setInterval(tick, this.pollIntervalMs);
+    // Allow the Node.js process to exit even if the timer is still active.
+    if (typeof this.pollTimer === "object" && this.pollTimer !== null && "unref" in this.pollTimer) {
+      (this.pollTimer as { unref(): void }).unref();
+    }
+  }
+
+  /** Marks the run complete and fires `onDone` exactly once. */
+  private finishReplay(): void {
+    if (this.replayDone) return;
+    this.replayDone = true;
+    this.onDone?.();
   }
 
   /**
@@ -143,6 +208,11 @@ export class SorobanSubscriber {
    */
   async stop(): Promise<void> {
     this.isStopped = true;
+    this._isRunning = false;
+    if (this.pollTimer !== null) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
     this.inflightAbort?.abort();
     // Only await the in-flight poll when we are NOT already inside it.
     // Awaiting from within onEvent would deadlock because the poll is waiting
@@ -161,7 +231,7 @@ export class SorobanSubscriber {
     if (this.isReplayMode && this.replayDone) return;
 
     let activeSubs = [...this.subscriptions];
-    if (activeSubs.length === 0 && this.onEvent) {
+    if (activeSubs.length === 0) {
       activeSubs = [{ id: "__legacy__", filters: [] }];
     }
 
@@ -227,15 +297,38 @@ export class SorobanSubscriber {
       uniqueEvents.sort((a, b) => a.pagingToken.localeCompare(b.pagingToken));
     }
 
+    // A bounded replay that fetched no further events has exhausted the stream
+    // before reaching endLedger — finish so onDone fires exactly once.
+    if (this.isReplayMode && uniqueEvents.length === 0) {
+      this.finishReplay();
+      return;
+    }
+
     this.isPolling = true;
     try {
-      for (const event of result.events) {
+      for (const event of uniqueEvents) {
         // Re-check after every event delivery in case stop() was called
         // concurrently (e.g. from within the onEvent handler).
         if (this.isStopped) return;
 
+        // In replay mode, stop (exclusive) once an event reaches endLedger.
+        if (this.isReplayMode && this.endLedger !== undefined) {
+          const ledger = this.extractLedger(event);
+          if (ledger !== undefined && ledger >= this.endLedger) {
+            this.finishReplay();
+            return;
+          }
+        }
+
         await this.onEvent(event);
-        await this.cursorStore.saveCursor(event.pagingToken);
+        this.lastEventAt = new Date().toISOString();
+
+        if (this.isReplayMode) {
+          // Replay progress is ephemeral and must never touch the durable store.
+          this.replayCursor = event.pagingToken;
+        } else {
+          await this.cursorStore.saveCursor(event.pagingToken);
+        }
       }
     } finally {
       this.isPolling = false;
@@ -255,7 +348,7 @@ export class SorobanSubscriber {
 
     // Parse from paging token / id encoded as "<ledger>-<index>".
     const match = event.id.match(/^(\d+)-/);
-    if (match) {
+    if (match && match[1] !== undefined) {
       const n = parseInt(match[1], 10);
       if (!isNaN(n)) return n;
     }

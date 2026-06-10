@@ -2,7 +2,7 @@ import { Horizon } from "@stellar/stellar-sdk";
 import { Watcher } from "./Watcher.js";
 import { EngineAlreadyStartedError, HorizonStreamError } from "./errors.js";
 import { SorobanSubscriber } from "./SorobanSubscriber.js";
-import type { ReplayOptions } from "./SorobanSubscriber.js";
+import type { SorobanRpcLike, SorobanEvent } from "./SorobanSubscriber.js";
 import { toAccountAddress, toContractAddress } from "./address.js";
 import { toStellarAmount } from "./amount.js";
 import type { ContractAddress } from "./address.js";
@@ -163,6 +163,14 @@ export class EventEngine {
   private consecutiveCursorFailures = 0;
   private isCursorStoreUnhealthy = false;
   private pausedSources = new Set<"horizon" | "soroban">();
+  /**
+   * Optional live Soroban subscriber. Wired only when the engine is configured
+   * for live contract streaming; otherwise undefined, and the guarded calls
+   * throughout the engine are no-ops.
+   */
+  private sorobanSubscriber?: SorobanSubscriber;
+  /** Optional ABI registry used to enrich `contract.emitted` events with `decodedData`. */
+  private abiRegistry?: AbiRegistryClientLike;
 
 
   /**
@@ -196,6 +204,7 @@ export class EventEngine {
     this.log = config.logger ?? noop;
     this.streamKey = config.streamKey ?? "pulse-core-cursor";
     this.cursorFailureThreshold = config.cursorFailureThreshold ?? 5;
+    this.abiRegistry = config.abiRegistry;
   }
 
   /**
@@ -1478,16 +1487,14 @@ export class EventEngine {
   ): ContractInvokedEvent | null {
     if (typeof r.contract_id !== "string" || r.contract_id === "") return null;
     if (typeof r.function !== "string") return null;
-    if (typeof r.ledger !== "number") return null;
-    if (typeof r.txHash !== "string") return null;
     if (typeof r.created_at !== "string") return null;
     return {
       type: "contract.invoked",
       contractId: toContractAddress(r.contract_id),
       function: r.function,
       args: Array.isArray(r.args) ? (r.args as unknown[]) : [],
-      ledger: r.ledger,
-      txHash: r.txHash,
+      ...(typeof r.ledger === "number" ? { ledger: r.ledger } : {}),
+      ...(typeof r.txHash === "string" ? { txHash: r.txHash } : {}),
       timestamp: r.created_at,
       raw,
     };
@@ -1498,9 +1505,6 @@ export class EventEngine {
     raw: unknown
   ): ContractEmittedEvent | null {
     if (typeof r.contract_id !== "string" || r.contract_id === "") return null;
-    if (typeof r.ledger !== "number") return null;
-    if (typeof r.eventId !== "string") return null;
-    if (typeof r.txHash !== "string") return null;
     if (typeof r.created_at !== "string") return null;
     return {
       type: "contract.emitted",
@@ -1508,9 +1512,9 @@ export class EventEngine {
       topics: Array.isArray(r.topics) ? (r.topics as string[]) : [],
       data: r.data ?? null,
       decodedData: r.decodedData,
-      ledger: r.ledger,
-      eventId: r.eventId,
-      txHash: r.txHash,
+      ...(typeof r.ledger === "number" ? { ledger: r.ledger } : {}),
+      ...(typeof r.eventId === "string" ? { eventId: r.eventId } : {}),
+      ...(typeof r.txHash === "string" ? { txHash: r.txHash } : {}),
       inSuccessfulContractCall: Boolean(r.inSuccessfulContractCall),
       timestamp: r.created_at,
       raw,
@@ -1533,7 +1537,7 @@ export class EventEngine {
   }
 
   private matchesContractFilters(
-    event: { type: string; contractId: ContractAddress; topics: string[] },
+    event: ContractInvokedEvent | ContractEmittedEvent,
     filters: ContractSubscriptionFilter[]
   ): boolean {
     // No filters = match everything
@@ -1561,8 +1565,10 @@ export class EventEngine {
 
   /** Dispatch a contract event (invoked or emitted) to all matching contract watchers. */
   private dispatchContractEvent(event: Timestamped<ContractInvokedEvent | ContractEmittedEvent>): void {
-    for (const { watcher, filters } of this.contractRegistry.values()) {
-      if (this.matchesContractFilters(event, filters)) {
+    for (const [id, { watcher, filters }] of this.contractRegistry.entries()) {
+      // Structural contractId/topic filters first, then the optional
+      // per-subscription predicate (keyed by subscription id).
+      if (this.matchesContractFilters(event, filters) && this.passesFilter(id, event)) {
         watcher.emit(event.type, event);
         watcher.emit("*", event);
       }
