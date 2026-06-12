@@ -105,10 +105,11 @@ export function evaluatePredicate(predicate: ClaimPredicate, nowSeconds: number)
       return nowSeconds < beforeSeconds;
     }
 
-    default:
+    default: {
       // Exhaustiveness check - TypeScript will error if a case is missing
       const _exhaustive: never = predicate;
       return _exhaustive;
+    }
   }
 }
 

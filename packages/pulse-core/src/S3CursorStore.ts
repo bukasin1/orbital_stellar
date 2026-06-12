@@ -28,7 +28,7 @@ export class S3CursorStore {
         const parsed = JSON.parse(text as string);
         if (parsed && typeof parsed.cursor === "string") return parsed.cursor;
         return null;
-      } catch (err) {
+      } catch {
         // If the object isn't JSON, treat as null / invalid
         return null;
       }

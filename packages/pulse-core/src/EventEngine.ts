@@ -1,22 +1,18 @@
 import { Horizon } from "@stellar/stellar-sdk";
 import { Watcher } from "./Watcher.js";
-import { EngineAlreadyStartedError, HorizonStreamError, NetworkMismatchError } from "./errors.js";
+import { EngineAlreadyStartedError, NetworkMismatchError } from "./errors.js";
 import { SorobanSubscriber } from "./SorobanSubscriber.js";
 import { SorobanRpcClient } from "./SorobanRpcClient.js";
 import type { SorobanRpcLike, SorobanEvent } from "./SorobanSubscriber.js";
 import { toAccountAddress, toContractAddress } from "./address.js";
 import { toStellarAmount } from "./amount.js";
-import type { ContractAddress } from "./address.js";
 import type {
   AccountCreatedEvent,
-  AccountEventType,
   AccountMergeEvent,
   AccountOptionsChanges,
   AccountOptionsEvent,
   AbiRegistryClientLike,
   BumpSequenceEvent,
-  BumpSequenceEventType,
-  ClaimableBalanceClaimant,
   ClaimableClaimedEvent,
   ClaimableCreatedEvent,
   ContractEmittedEvent,
@@ -197,7 +193,7 @@ export class EventEngine {
           throw new Error("must be an http or https URL");
         }
       } catch (err) {
-        throw new Error(`Invalid horizonUrl: ${(err as Error).message}`);
+        throw new Error(`Invalid horizonUrl: ${(err as Error).message}`, { cause: err });
       }
       horizonUrl = config.horizonUrl;
     } else {
@@ -1140,7 +1136,7 @@ export class EventEngine {
     if (value !== null) {
       try {
         decoded = Buffer.from(value, "base64");
-      } catch (err) {
+      } catch {
         decoded = null;
       }
     }

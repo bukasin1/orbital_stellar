@@ -1,10 +1,8 @@
 import { exec } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
 import { Pool } from "pg";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { test, expect, beforeAll, afterAll, beforeEach } from "vitest";
-import type { PostgresCursorStore, PgLike } from "../src/PostgresCursorStore.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

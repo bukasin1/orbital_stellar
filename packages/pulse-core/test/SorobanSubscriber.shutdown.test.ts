@@ -5,7 +5,7 @@
  * emitted from the Soroban path, even when a `getEvents` call is in-flight
  * at the moment `stop()` is called.
  */
-import { expect, describe, it, vi, beforeEach } from "vitest";
+import { expect, describe, it, beforeEach } from "vitest";
 import { SorobanSubscriber } from "../src/SorobanSubscriber.js";
 import { FakeSorobanRpc } from "./fakes/FakeSorobanRpc.js";
 

@@ -1,5 +1,3 @@
-import type { ContractSubscriptionFilter } from "./index.js";
-
 /**
  * Validates a list of contract subscription filters according to Stellar RPC constraints:
  * - filters.length ≤ 5

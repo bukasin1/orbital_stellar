@@ -1096,13 +1096,13 @@ describe("pulse-webhooks DeadLetterStore", () => {
     const dlq = new DeadLetterStore();
 
     vi.setSystemTime(new Date("2026-04-26T10:00:00Z"));
-    const id1 = dlq.add("https://example.com/webhooks", deliveryEvent, "Error 1", 1);
+    dlq.add("https://example.com/webhooks", deliveryEvent, "Error 1", 1);
 
     vi.setSystemTime(new Date("2026-04-26T11:00:00Z"));
     const id2 = dlq.add("https://example.com/webhooks", deliveryEvent, "Error 2", 2);
 
     vi.setSystemTime(new Date("2026-04-26T12:00:00Z"));
-    const id3 = dlq.add("https://example.com/webhooks", deliveryEvent, "Error 3", 3);
+    dlq.add("https://example.com/webhooks", deliveryEvent, "Error 3", 3);
 
     const since = new Date("2026-04-26T10:30:00Z").getTime();
     const until = new Date("2026-04-26T11:30:00Z").getTime();

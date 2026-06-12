@@ -451,7 +451,7 @@ describe("decodeContractEvent — error cases", () => {
 
   it("returns error for vec containing non-decodable value", () => {
     // This should not throw — it should return an error
-    const result = decodeContractEvent(USDC_SPEC, {
+    decodeContractEvent(USDC_SPEC, {
       topics: [{ sym: "event" }],
       data: { vec: [{ unknownType: Symbol("bad") }] },
     });

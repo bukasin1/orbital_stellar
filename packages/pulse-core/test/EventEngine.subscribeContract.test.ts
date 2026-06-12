@@ -1,10 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEngine } from "../src/EventEngine.js";
-import type {
-  ContractEmittedEvent,
-  ContractInvokedEvent,
-  ContractSubscriptionConfig,
-} from "../src/index.js";
+import type { ContractSubscriptionConfig } from "../src/index.js";
 
 function buildEngine(log?: any): {
   engine: EventEngine;

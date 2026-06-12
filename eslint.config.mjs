@@ -43,10 +43,12 @@ export default tseslint.config(
       "no-empty": ["error", { allowEmptyCatch: true }],
       // Existing tech debt — surfaced as warnings, not blockers.
       "@typescript-eslint/no-require-imports": "warn",
-      "@typescript-eslint/no-empty-object-type": "warn",
+      // Allow `interface X extends Y {}` — used for type-alias indirection.
+      "@typescript-eslint/no-empty-object-type": ["warn", { allowInterfaces: "with-single-extends" }],
       "@typescript-eslint/no-unused-expressions": "warn",
       "@typescript-eslint/ban-ts-comment": "warn",
-      "no-useless-assignment": "warn",
+      // Off: false-positives on fallback inits / TS definite-assignment patterns.
+      "no-useless-assignment": "off",
       "no-case-declarations": "warn",
       // Rethrows without `{ cause }` — good practice, surfaced as warnings to burn down.
       "preserve-caught-error": "warn",

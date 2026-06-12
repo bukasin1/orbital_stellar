@@ -1,7 +1,7 @@
 import type { NormalizedEvent } from "@orbital-stellar/pulse-core";
 
 import type { VerifyWebhookOptions } from "./types.js";
-import { DEFAULT_MAX_AGE_MS, DEFAULT_CLOCK_SKEW_MS } from "./types.js";
+import { DEFAULT_CLOCK_SKEW_MS } from "./types.js";
 
 /**
  * Verifies webhook signatures using Web Crypto API (compatible with Cloudflare Workers, Deno, and browsers)

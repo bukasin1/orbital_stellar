@@ -188,12 +188,10 @@ describe("SorobanSubscriber – deduplication", () => {
   });
 
   it("does not record an event ID if onEvent throws", async () => {
-    let callCount = 0;
     const throwingSub = new SorobanSubscriber({
       rpc: stub,
       cursorStore,
       onEvent: async () => {
-        callCount++;
         throw new Error("handler error");
       },
     });

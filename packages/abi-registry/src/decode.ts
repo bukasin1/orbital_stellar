@@ -74,33 +74,6 @@ export type DecodeError = {
 export type DecodeResult = DecodedEvent | DecodeError;
 
 // ---------------------------------------------------------------------------
-// Raw ScVal shape (as returned by Horizon / Soroban RPC JSON responses)
-// ---------------------------------------------------------------------------
-
-/**
- * A raw ScVal as it appears in Horizon/RPC JSON responses.
- * The discriminant is the single key of the object (e.g. `{ "u32": 42 }`).
- */
-type RawScVal =
-  | { bool: boolean }
-  | { void: null | undefined }
-  | { u32: number }
-  | { i32: number }
-  | { u64: string | number }
-  | { i64: string | number }
-  | { u128: { lo: string | number; hi: string | number } | string | number }
-  | { i128: { lo: string | number; hi: string | number } | string | number }
-  | { u256: string | number }
-  | { i256: string | number }
-  | { bytes: string }
-  | { str: string }
-  | { sym: string }
-  | { address: string }
-  | { vec: RawScVal[] | null }
-  | { map: Array<{ key: RawScVal; val: RawScVal }> | null }
-  | Record<string, unknown>; // custom struct / fallback
-
-// ---------------------------------------------------------------------------
 // Core decoder
 // ---------------------------------------------------------------------------
 

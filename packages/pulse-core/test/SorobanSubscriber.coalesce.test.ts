@@ -4,7 +4,6 @@ import {
   type SorobanEvent,
   type SorobanRpcLike,
   type CursorStoreLike,
-  type SorobanSubscription,
 } from "../src/SorobanSubscriber.js";
 import type { ContractSubscriptionFilter } from "../src/index.js";
 

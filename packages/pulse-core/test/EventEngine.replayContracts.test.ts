@@ -8,7 +8,7 @@
  *   4. Events at or beyond endLedger are NOT delivered.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { EventEngine } from "../src/EventEngine.js";
 import type { SorobanRpcLike, SorobanEvent } from "../src/SorobanSubscriber.js";
 
