@@ -22,7 +22,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "size": "size-limit"
   },
   "dependencies": {
     "@orbital/pulse-core": "workspace:*"
