@@ -42,7 +42,7 @@ export interface SorobanRpc {
     limit: number,
     signal?: AbortSignal,
     filters?: ContractSubscriptionFilter[],
-    options?: { xdrFormat?: "base64" | "json"; signal?: AbortSignal } | AbortSignal
+    options?: { xdrFormat?: "base64" | "json"; signal?: AbortSignal } | AbortSignal,
   ): Promise<{ events: SorobanEvent[]; [key: string]: any }>;
 }
 
@@ -338,7 +338,7 @@ export class SorobanSubscriber {
         {
           xdrFormat: this.xdrFormat,
           signal,
-        }
+        },
       ),
     );
 

@@ -1923,7 +1923,8 @@ export function normalizeContractEvent(
       return null;
     }
 
-    const isJson = xdrFormat === "json" || typeof value === "object" || rawRpcEvent.decodedData !== undefined;
+    const isJson =
+      xdrFormat === "json" || typeof value === "object" || rawRpcEvent.decodedData !== undefined;
 
     const norm: any = {
       type: "contract_emitted",

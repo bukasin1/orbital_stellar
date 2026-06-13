@@ -240,7 +240,7 @@ export class SorobanRpcClient {
     limit?: number,
     signalOrOptions?: AbortSignal | { xdrFormat?: "base64" | "json"; signal?: AbortSignal },
     filters?: ContractSubscriptionFilter[],
-    options?: { xdrFormat?: "base64" | "json"; signal?: AbortSignal } | AbortSignal
+    options?: { xdrFormat?: "base64" | "json"; signal?: AbortSignal } | AbortSignal,
   ): Promise<SorobanGetEventsResult> {
     const params: Record<string, unknown> = {};
     if (startCursor !== undefined) params.startCursor = startCursor;
@@ -252,7 +252,12 @@ export class SorobanRpcClient {
 
     // Resolve signal or options from the third parameter
     if (signalOrOptions !== undefined) {
-      if (signalOrOptions instanceof AbortSignal || (typeof signalOrOptions === "object" && signalOrOptions !== null && "addEventListener" in signalOrOptions)) {
+      if (
+        signalOrOptions instanceof AbortSignal ||
+        (typeof signalOrOptions === "object" &&
+          signalOrOptions !== null &&
+          "addEventListener" in signalOrOptions)
+      ) {
         signal = signalOrOptions as AbortSignal;
       } else if (typeof signalOrOptions === "object" && signalOrOptions !== null) {
         if ("xdrFormat" in signalOrOptions) {
@@ -266,7 +271,10 @@ export class SorobanRpcClient {
 
     // Resolve signal or options from the fifth parameter (options)
     if (options !== undefined) {
-      if (options instanceof AbortSignal || (typeof options === "object" && options !== null && "addEventListener" in options)) {
+      if (
+        options instanceof AbortSignal ||
+        (typeof options === "object" && options !== null && "addEventListener" in options)
+      ) {
         signal = options as AbortSignal;
       } else if (typeof options === "object" && options !== null) {
         if ("xdrFormat" in options) {

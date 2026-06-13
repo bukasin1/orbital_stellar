@@ -16,20 +16,9 @@ export type {
 
 export { validateContractFilters } from "./contractFilters.js";
 export { Watcher } from "./Watcher.js";
-export { toBigInt } from "./amount.js";
 export type { StellarAmount } from "./amount.js";
-export type { AccountAddress, MuxedAddress, ContractAddress, StellarAddress } from "./address.js";
-export {
-  isAccountAddress,
-  isMuxedAddress,
-  isContractAddress,
-  isStellarAddress,
-  toAccountAddress,
-  toMuxedAddress,
-  toContractAddress,
-} from "./address.js";
-export { EngineAlreadyStartedError, HorizonStreamError, SorobanRpcError, isSorobanRpcError } from "./errors.js";
-export type { SorobanRpcErrorCode, SorobanRpcErrorOptions } from "./errors.js";
+export type { AccountAddress, MuxedAddress, ContractAddress } from "./address.js";
+export { EngineAlreadyStartedError, HorizonStreamError } from "./errors.js";
 export { StrKey } from "@stellar/stellar-sdk";
 export { CursorStore } from "./CursorStore.js";
 export { MemoryCursorStore } from "./MemoryCursorStore.js";
@@ -37,15 +26,12 @@ export { FileCursorStore } from "./FileCursorStore.js";
 export { PostgresCursorStore } from "./PostgresCursorStore.js";
 export type { PgLike } from "./PostgresCursorStore.js";
 export { RedisCursorStore } from "./RedisCursorStore.js";
-export type { RedisLike } from "./RedisCursorStore.js";
 export { S3CursorStore } from "./S3CursorStore.js";
 export { cacheCursorStore } from "./cacheCursorStore.js";
 export { coalesceCursorStore, CoalescingStore } from "./coalesceCursorStore.js";
 export type { CoalescingStoreOptions } from "./coalesceCursorStore.js";
 export { migrateCursors } from "./migrateCursors.js";
 export type { MigrateCursorsResult } from "./migrateCursors.js";
-export { evaluatePredicate, normalizeClaimPredicate, isClaimPredicateType } from "./claimPredicate.js";
-export type { ClaimPredicate } from "./claimPredicate.js";
 
 /** The Stellar network to connect to. */
 export type Network = "mainnet" | "testnet";
