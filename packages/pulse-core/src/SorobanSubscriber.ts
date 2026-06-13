@@ -1,9 +1,11 @@
 import type { ContractSubscriptionFilter, ContractAddress } from "./index.js";
 import { SorobanRpcError } from "./errors.js";
+import type { Watcher } from "./Watcher.js";
+import type { SorobanCursorExpiredNotification } from "./index.js";
 
 /**
  * SorobanSubscriber — polls a Soroban RPC for contract events and forwards
- * them to a caller-supplied handler or Watcher.
+ * them to a caller-supplied handler.
  *
  * Graceful shutdown guarantee
  * ---------------------------
@@ -13,61 +15,7 @@ import { SorobanRpcError } from "./errors.js";
  *   3. Awaits the in-flight poll Promise so the caller can `await stop()` and
  *      be certain no further events will be emitted once the Promise resolves.
  *   4. Silently drops any events that arrive from an aborted poll.
- *
- * ## Deduplication
- * An in-memory LRU set (default cap: 1024 event IDs) suppresses events that
- * have already been emitted. This is best-effort: events outside the window
- * may be re-emitted after a restart.
- *
- * ## Cursor-expiry recovery
- * Stellar RPC retains at most 7 days of events (24 h by default). If the
- * stored cursor falls outside that window, `getEvents` will throw a
- * JSON-RPC -32600 error. SorobanSubscriber catches that error, emits an
- * `engine.cursor_expired` notification on the Watcher, logs a warning about
- * the data-loss implication, and resumes polling from the current
- * `latestLedger` — dropping the gap in history.
- *
- * **Data-loss notice**: Events that occurred between the expired cursor
- * and the recovery point are permanently lost. Consumers that require
- * guaranteed event delivery should persist a durable replay store and compare
- * the recovered `latestLedger` against the last successfully processed ledger
- * to detect any gap.
  */
-
-import * as StellarSdk from "@stellar/stellar-sdk";
-import type { rpc } from "@stellar/stellar-sdk";
-import type { Watcher } from "./Watcher.js";
-import type { SorobanCursorExpiredNotification } from "./index.js";
-
-// ---------------------------------------------------------------------------
-// Minimal LRU set (Map-backed, insertion-order eviction).
-// ---------------------------------------------------------------------------
-
-class LruSet {
-  private readonly map = new Map<string, 1>();
-
-  constructor(private readonly maxSize: number) {}
-
-  has(id: string): boolean {
-    return this.map.has(id);
-  }
-
-  add(id: string): void {
-    if (this.map.has(id)) this.map.delete(id);
-    this.map.set(id, 1);
-    if (this.map.size > this.maxSize) {
-      this.map.delete(this.map.keys().next().value as string);
-    }
-  }
-
-  get size(): number {
-    return this.map.size;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
 
 /** Minimal interface for a cursor persistence layer. */
 export interface CursorStore {
@@ -75,7 +23,7 @@ export interface CursorStore {
   saveCursor(cursor: string | undefined): Promise<void>;
 }
 
-/** Alias for {@link CursorStore}. */
+/** Alias for {@link CursorStore}; the name used by the subscriber test suite. */
 export type CursorStoreLike = CursorStore;
 
 /** A single event returned by the Soroban RPC. */
@@ -95,7 +43,7 @@ export interface SorobanRpc {
     limit: number,
     signal?: AbortSignal,
     filters?: ContractSubscriptionFilter[],
-  ): Promise<{ events: SorobanEvent[]; cursor?: string }>;
+  ): Promise<{ events: SorobanEvent[] }>;
 }
 
 /** Alias for {@link SorobanRpc}; the name used by EventEngine's replay API. */
@@ -149,12 +97,7 @@ export interface SorobanSubscriberOptions {
   onRetryableError?: (error: SorobanRpcError) => void;
   /** Notified when a terminal (non-retryable) {@link SorobanRpcError} is caught. */
   onTerminalError?: (error: unknown) => void;
-
-  // Continuous polling & cursor-expired options (rpcUrl-based construction)
-  rpcUrl?: string;
   source?: string;
-  cursor?: string;
-  filters?: rpc.Api.GetEventsRequest["filters"];
   logger?: {
     info(msg: string, ...args: unknown[]): void;
     warn(msg: string, ...args: unknown[]): void;
@@ -163,53 +106,10 @@ export interface SorobanSubscriberOptions {
   watcher?: Watcher;
 }
 
-/** JSON-RPC error shape thrown by @stellar/stellar-sdk when the RPC server
- *  returns an error response. The `code` field is the JSON-RPC error code. */
-type JsonRpcError = {
-  code: number;
-  message: string;
-  data?: unknown;
-};
-
-/**
- * Detects whether the error thrown by rpc.Server.getEvents indicates
- * that the supplied cursor (or startLedger) is outside the server's retention
- * window.
- *
- * Stellar RPC returns JSON-RPC error code -32600 ("Invalid Request") with a
- * message containing "startLedger" or "cursor" and a phrase like "before the
- * oldest ledger" / "out of range" when the requested ledger is no longer
- * retained.
- */
-function isCursorExpiredError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-
-  const e = err as JsonRpcError;
-
-  // JSON-RPC -32600 = Invalid Request — the code Stellar RPC uses for
-  // out-of-retention-window cursor/startLedger errors.
-  if (e.code !== -32600) return false;
-
-  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
-  return (
-    msg.includes("cursor") ||
-    msg.includes("startledger") ||
-    msg.includes("start_ledger") ||
-    msg.includes("before the oldest") ||
-    msg.includes("out of range")
-  );
-}
-
 const MIN_PAGE_LIMIT = 1;
 const MAX_PAGE_LIMIT = 10_000;
 const DEFAULT_PAGE_LIMIT = 100;
 const DEFAULT_DEDUP_CACHE_SIZE = 10_000;
-
-const noop = { info: () => {}, warn: () => {}, error: () => {} };
-
-// ---------------------------------------------------------------------------
-// SorobanSubscriber
-// ---------------------------------------------------------------------------
 
 export class SorobanSubscriber {
   private readonly rpc: SorobanRpc;
@@ -218,6 +118,14 @@ export class SorobanSubscriber {
   private readonly pageLimit: number;
 
   private isStopped = false;
+
+  private readonly source?: string;
+  private readonly log: {
+    info(msg: string, ...args: unknown[]): void;
+    warn(msg: string, ...args: unknown[]): void;
+    error(msg: string, ...args: unknown[]): void;
+  };
+  private readonly watcher?: Watcher;
 
   /** AbortController for the currently in-flight `getEvents` call. */
   private inflightAbort: AbortController | null = null;
@@ -237,7 +145,7 @@ export class SorobanSubscriber {
 
   // --- Cross-poll de-duplication state ---
   /** Insertion-ordered set of recently-delivered event IDs (bounded FIFO window). */
-  private readonly seen: LruSet;
+  private readonly seen = new Set<string>();
   private readonly dedupCacheSize: number;
 
   // --- Bounded-replay mode state (set when `endLedger` is provided) ---
@@ -265,20 +173,17 @@ export class SorobanSubscriber {
   private readonly onTerminalError?: (error: unknown) => void;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // --- Cursor-expired recovery state ---
-  private readonly source?: string;
-  private readonly log: { info(msg: string, ...args: unknown[]): void; warn(msg: string, ...args: unknown[]): void; error(msg: string, ...args: unknown[]): void };
-  private watcher: Watcher | null = null;
-
   constructor(options: SorobanSubscriberOptions) {
     const pageLimit = options.pageLimit ?? options.pageSize ?? DEFAULT_PAGE_LIMIT;
     if (!Number.isFinite(pageLimit) || pageLimit < MIN_PAGE_LIMIT || pageLimit > MAX_PAGE_LIMIT) {
       throw new RangeError(`pageLimit must be between 1 and 10,000 (received ${pageLimit})`);
     }
 
+    this.rpc = options.rpc;
+    this.cursorStore = options.cursorStore;
+    this.onEvent = options.onEvent;
     this.pageLimit = pageLimit;
     this.dedupCacheSize = options.dedupCacheSize ?? DEFAULT_DEDUP_CACHE_SIZE;
-    this.seen = new LruSet(this.dedupCacheSize);
     this.endLedger = options.endLedger;
     this.onDone = options.onDone;
     this.pollIntervalMs = options.pollIntervalMs ?? 2000;
@@ -288,49 +193,8 @@ export class SorobanSubscriber {
     this.onRetryableError = options.onRetryableError;
     this.onTerminalError = options.onTerminalError;
     this.source = options.source;
-    this.log = options.logger ?? noop;
-
-    if (options.watcher) {
-      this.watcher = options.watcher;
-    }
-
-    // rpcUrl-based construction: build an rpc adapter and an in-memory cursor store
-    if (options.rpcUrl) {
-      const server = new StellarSdk.rpc.Server(options.rpcUrl);
-      let cursor: string | undefined = options.cursor ?? undefined;
-      const filters = options.filters ?? [];
-
-      this.rpc = {
-        getEvents: async (startCursor: string | undefined, limit: number, signal?: AbortSignal) => {
-          const req: any = {
-            filters,
-            limit,
-          };
-          if (startCursor) {
-            req.cursor = startCursor;
-          } else {
-            req.startLedger = 0;
-          }
-          const res = await server.getEvents(req);
-          return {
-            events: res.events as any as SorobanEvent[],
-            cursor: res.cursor,
-          };
-        },
-      };
-
-      this.cursorStore = {
-        getCursor: async () => cursor,
-        saveCursor: async (c: string | undefined) => {
-          cursor = c;
-        },
-      };
-    } else {
-      this.rpc = options.rpc!;
-      this.cursorStore = options.cursorStore!;
-    }
-
-    this.onEvent = options.onEvent;
+    this.log = options.logger ?? { info: () => {}, warn: () => {}, error: () => {} };
+    this.watcher = options.watcher;
   }
 
   /** True when operating in bounded-replay mode (an `endLedger` was supplied). */
@@ -350,7 +214,6 @@ export class SorobanSubscriber {
   start(): void {
     if (this._isRunning) return;
     this._isRunning = true;
-    this.isStopped = false;
     const tick = () => {
       this.inflightPoll = (this.inflightPoll ?? Promise.resolve()).then(() => this.pollOnce());
     };
@@ -490,7 +353,7 @@ export class SorobanSubscriber {
       ),
     );
 
-    let results: { events: SorobanEvent[]; cursor?: string }[];
+    let results: { events: SorobanEvent[] }[];
     try {
       results = await Promise.all(promises);
     } catch (err) {
@@ -562,7 +425,7 @@ export class SorobanSubscriber {
         // un-recorded (and therefore re-deliverable on a later poll).
         await this.dispatch(event);
         this.lastEventAt = new Date().toISOString();
-        this.seen.add(event.id);
+        this.recordSeen(event.id);
 
         if (this.isReplayMode) {
           // Replay progress is ephemeral and must never touch the durable store.
@@ -586,10 +449,6 @@ export class SorobanSubscriber {
   private async dispatch(event: SorobanEvent): Promise<void> {
     if (this.subscriptions.length === 0) {
       if (this.onEvent) await this.onEvent(event);
-      if (this.watcher) {
-        this.watcher.emit("soroban.event", event as never);
-        this.watcher.emit("*", event as never);
-      }
       return;
     }
 
@@ -620,6 +479,16 @@ export class SorobanSubscriber {
     return true;
   }
 
+  /** Records a delivered event ID, evicting the oldest entries past the cap. */
+  private recordSeen(id: string): void {
+    this.seen.add(id);
+    while (this.seen.size > this.dedupCacheSize) {
+      const oldest = this.seen.values().next().value;
+      if (oldest === undefined) break;
+      this.seen.delete(oldest);
+    }
+  }
+
   /** Schedules a single deferred re-poll using the injectable timer. */
   private scheduleRetry(): void {
     if (this.isStopped) return;
@@ -628,6 +497,36 @@ export class SorobanSubscriber {
       if (this.isStopped) return;
       this.inflightPoll = (this.inflightPoll ?? Promise.resolve()).then(() => this.pollOnce());
     }, this.retryDelayMs);
+  }
+
+  /**
+   * Extracts the ledger sequence number from a SorobanEvent.
+   * The Soroban RPC embeds the ledger in the event `id` field as
+   * `<ledger>-<index>` (e.g. "1234-0").  Falls back to a `ledger` field if
+   * present on the raw event object.
+   */
+  private extractLedger(event: SorobanEvent): number | undefined {
+    // Prefer explicit ledger field (available in some RPC responses).
+    const raw = event as unknown as Record<string, unknown>;
+    if (typeof raw.ledger === "number") return raw.ledger;
+
+    // Parse from paging token / id encoded as "<ledger>-<index>".
+    const match = event.id.match(/^(\d+)-/);
+    if (match && match[1] !== undefined) {
+      const n = parseInt(match[1], 10);
+      if (!isNaN(n)) return n;
+    }
+    return undefined;
+  }
+
+  private isAbortError(err: unknown): boolean {
+    if (err instanceof Error) {
+      // DOMException name set by the Fetch API / AbortController
+      if ((err as { name?: string }).name === "AbortError") return true;
+      // Node.js / undici uses this code
+      if ((err as NodeJS.ErrnoException).code === "ABORT_ERR") return true;
+    }
+    return false;
   }
 
   /**
@@ -660,34 +559,41 @@ export class SorobanSubscriber {
 
     await this.cursorStore.saveCursor(undefined);
   }
+}
 
-  /**
-   * Extracts the ledger sequence number from a SorobanEvent.
-   * The Soroban RPC embeds the ledger in the event `id` field as
-   * `<ledger>-<index>` (e.g. "1234-0").  Falls back to a `ledger` field if
-   * present on the raw event object.
-   */
-  private extractLedger(event: SorobanEvent): number | undefined {
-    // Prefer explicit ledger field (available in some RPC responses).
-    const raw = event as unknown as Record<string, unknown>;
-    if (typeof raw.ledger === "number") return raw.ledger;
+/** JSON-RPC error shape thrown by @stellar/stellar-sdk when the RPC server
+ *  returns an error response. The `code` field is the JSON-RPC error code. */
+type JsonRpcError = {
+  code: number;
+  message: string;
+  data?: unknown;
+};
 
-    // Parse from paging token / id encoded as "<ledger>-<index>".
-    const match = event.id.match(/^(\d+)-/);
-    if (match && match[1] !== undefined) {
-      const n = parseInt(match[1], 10);
-      if (!isNaN(n)) return n;
-    }
-    return undefined;
-  }
+/**
+ * Detects whether the error thrown by rpc.Server.getEvents indicates
+ * that the supplied cursor (or startLedger) is outside the server's retention
+ * window.
+ *
+ * Stellar RPC returns JSON-RPC error code -32600 ("Invalid Request") with a
+ * message containing "startLedger" or "cursor" and a phrase like "before the
+ * oldest ledger" / "out of range" when the requested ledger is no longer
+ * retained.
+ */
+function isCursorExpiredError(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
 
-  private isAbortError(err: unknown): boolean {
-    if (err instanceof Error) {
-      // DOMException name set by the Fetch API / AbortController
-      if ((err as { name?: string }).name === "AbortError") return true;
-      // Node.js / undici uses this code
-      if ((err as NodeJS.ErrnoException).code === "ABORT_ERR") return true;
-    }
-    return false;
-  }
+  const e = err as JsonRpcError;
+
+  // JSON-RPC -32600 = Invalid Request — the code Stellar RPC uses for
+  // out-of-retention-window cursor/startLedger errors.
+  if (e.code !== -32600) return false;
+
+  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
+  return (
+    msg.includes("cursor") ||
+    msg.includes("startledger") ||
+    msg.includes("start_ledger") ||
+    msg.includes("before the oldest") ||
+    msg.includes("out of range")
+  );
 }

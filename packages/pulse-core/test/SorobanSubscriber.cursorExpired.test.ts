@@ -11,14 +11,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SorobanSubscriber } from "../src/SorobanSubscriber.js";
 import { Watcher } from "../src/Watcher.js";
-import type {
-  SorobanCursorExpiredNotification,
-} from "../src/index.js";
-import type {
-  SorobanRpc,
-  SorobanEvent,
-  CursorStore,
-} from "../src/SorobanSubscriber.js";
+import type { SorobanCursorExpiredNotification } from "../src/index.js";
+import type { SorobanRpc, SorobanEvent, CursorStore } from "../src/SorobanSubscriber.js";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
